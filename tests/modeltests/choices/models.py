@@ -36,4 +36,9 @@ __test__ = {'API_TESTS':"""
 u'Male'
 >>> s.get_gender_display()
 u'Female'
+
+# 7913
+>>> a.gender = ''
+>>> a.get_gender_display()
+u''
 """}
