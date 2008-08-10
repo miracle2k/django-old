@@ -6,7 +6,7 @@ from django.contrib.sites.models import Site, RequestSite
 from django.utils import feedgenerator
 from django.utils.tzinfo import FixedOffset
 from django.utils.encoding import smart_unicode, iri_to_uri
-from django.conf import settings         
+from django.conf import settings
 from django.template import RequestContext
 
 def add_domain(domain, url):
@@ -146,10 +146,15 @@ class Feed(object):
                 tzOffset = timedelta(minutes=tzOffsetMinutes)
                 pubdate = pubdate.replace(tzinfo=FixedOffset(tzOffset))
 
+            title_ctx = RequestContext(self.request, {'obj': item, 'site': current_site})
+            title_ctx.autoescape = False
+            description_ctx = RequestContext(self.request, {'obj': item, 'site': current_site})
+            title_ctx.autoescape = False
+
             feed.add_item(
-                title = title_tmp.render(RequestContext(self.request, {'obj': item, 'site': current_site})),
+                title = title_tmp.render(title_ctx),
                 link = link,
-                description = description_tmp.render(RequestContext(self.request, {'obj': item, 'site': current_site})),
+                description = description_tmp.render(description_ctx),
                 unique_id = self.__get_dynamic_attr('item_guid', item, link),
                 enclosure = enc,
                 pubdate = pubdate,

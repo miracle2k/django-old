@@ -185,6 +185,7 @@ class Rss201rev2Feed(RssFeed):
     def write_items(self, handler):
         for item in self.items:
             handler.startElement(u"item", {})
+            # TODO: need double escaping here
             handler.addQuickElement(u"title", item['title'])
             handler.addQuickElement(u"link", item['link'])
             if item['description'] is not None:
