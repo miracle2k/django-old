@@ -409,3 +409,26 @@ class CountQuery(Query):
 
     def get_ordering(self):
         return ()
+
+class AggregateQuery(Query):
+    """
+    An AggregateQuery takes another query as a parameter to the FROM
+    clause and only selects the elements in the provided list.
+    """
+    #CK Clean this
+    def add_select(self, select):
+        self.select = select
+
+    def add_subquery(self, query):
+        self.subquery, self.sub_params = query.as_sql(with_col_aliases=True)
+
+    def as_sql(self, quote_func=None):
+        """
+        Creates the SQL for this query. Returns the SQL string and list of
+        parameters.
+        """
+        sql = ('SELECT %s FROM (%s) AS subquery' %
+               (', '.join([i.as_fold() for i in self.select]), self.subquery))
+        params = self.sub_params
+        return (sql, params)
+               

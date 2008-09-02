@@ -1,0 +1,315 @@
+=============
+ Aggregation
+=============
+
+**New in Django development version**
+
+Aggergation works on top of an existing QuerySet allowing you to do
+calculations over sets of objects at the database level.
+
+The calculations to be retrieved are expressed using Aggregate
+objects.  
+
+Aggregate objects
+=================
+
+Aggregate objects define the correspondance between the lookup being
+done in ORM syntax and the query that is executed in the backend.
+
+All Aggregate objects take the field to be aggregated upon as a string
+and an optional alias to represent the calculation in the result.
+
+Field representations are done in the same way as in field
+lookups. For example::
+
+    Max(total_price='price')
+
+would represent the maximum price of the selected objects in the model
+aggregated upon and it would be refered to as "total_price" while::
+
+    Avg(mean_age='friends__age')
+
+would represent the maximum of the related field for all the objects
+related to the objects in the model aggregated upon, likewise refered
+to as "mean_age".
+
+There are many possible ways to use aggregation so the actual results
+of different lookups will become clearer in the documentation for
+``aggregate()`` and ``annotate()``.
+
+If the alias is not present a default alias is defined according to
+each Aggregate object. So::
+
+     Min('friend__height')
+
+would be refered as "friend__height__max".
+
+For every aggregate object that spans multiple models, if the field of
+the related model to be used in the aggregation is not specified, the
+field defaults to the primary key.
+
+Aggregate objects are located at ``django.db.aggregates``. Every
+aggregate object is a subclass of ``Aggregate``. A empty subclass of
+aggregate called Func could be used like this::
+
+          Func('field')
+
+and have the following SQL equivalent:::
+
+    SELECT FUNC(field) as field__func ...
+
+The following Aggregate subclases are pre-defined:
+
+Max
+---
+
+Calculates the maximum on the given field.
+
+Default alias: ``field__max``
+
+Min
+---
+
+Calculates the minimum on the given field.
+
+Default alias: ``field__min``
+
+Avg
+---
+
+Calculates the average on the given field.
+
+Default alias: ``field__avg``
+
+Sum
+---
+
+Calculates the sumation on the given field.
+
+Default alias: ``field__sum``
+
+Count
+-----
+
+Counts the objects in which the field is not "Null". For counting
+regardles of the field please refer to `count()`_.
+
+Count takes an optional parameter: *distinct*.
+
+Distinct, if True, reduces the output counting repetitions on a field only once.
+
+If distinct is True
+
+   Count(field, distinct=True)
+
+has the SQL equivalent:
+
+    COUNT(DISTINCT field) 
+
+otherwise it is:
+
+    COUNT(field)
+
+Default alias: ``field__count``
+
+.. _count(): ../db-api/#count
+
+Methods that do aggregation
+===========================
+
+For this section we'll refer to the following models::
+
+    class Author(models.Model):                   
+       name = models.CharField(max_length=100)    
+       age = models.IntegerField()                
+       friends = models.ManyToManyField('self', blank=True)
+                                                  
+    class Publisher(models.Model):                
+       name = models.CharField(max_length=300)    
+       num_awards = models.IntegerField()         
+                                                  
+    class Book(models.Model):                     
+       isbn = models.CharField(max_length=9)      
+       name = models.CharField(max_length=300)    
+       pages = models.IntegerField()              
+       price = models.FloatField()                
+       authors = models.ManyToManyField(Author)   
+       publisher = models.ForeignKey(Publisher)   
+                                                  
+    class Store(models.Model):                    
+       name = models.CharField(max_length=300)    
+       books = models.ManyToManyField(Book)
+
+
+aggregate(args, kwargs)
+-----------------------
+
+Returns a dictionary containing the calculations (aggregation) over
+the current queryset.
+
+    >>> Book.objects.aggregate(Avg('price'), highest_price=Max('price'))
+    {'price__avg': 45.045000000000002, 'highest_price': 82.799999999999997}
+
+You can also do aggregate lookups on related models.
+
+    >>> Author.objects.aggregate(Sum('book__price'))
+    {'book__price__sum': 442.44999999999999}
+
+it is important to notice that the previous query reads "The sum of
+the price of every book for every author". So if a book has many
+authors its price will be added as many times as authors the book
+has. If you would be interested, instead, in "the sum of the price for
+all books" you would need to do a query like this::
+
+    >>> Book.objects.aggregate(Sum('price'))
+    {'price__sum': 270.26999999999998}
+
+.. note::
+   
+   It is importante to notice that aggregate() is a terminal
+   clause. This means that it does *not* return a queryset and no
+   other modifiers can be applied after it.
+
+annotate(args, kwargs)
+----------------------
+
+Returns a QuerySet extended with the results of the calculations on
+the given fields. So if you need to retrieve the "age for the oldest
+author of each book" you could do:
+
+    >>> books = Book.objects.annotate(Max('authors__age'))
+    >>> books[0].name
+    u'Python Web Development With Django'
+    >>> books[0].authors.all()
+    [<Author: Jeffrey Forcier >, <Author: Paul Bissex>, <Author: Wesley J. Chun>]
+    >>> books[0].authors__age__max
+    37.0
+
+And the output would be the model object extended with the aggregation
+information.
+
+grouping
+~~~~~~~~
+
+Sometimes you want to annotate, not on the whole set of objects but on
+those that share the same value for some fields. To do this, you
+appply values() before annotating. For example if you want to retrieve
+the average author age for the books of the same price you could do::
+
+    >>> books = Book.objects.values('price').annotate(oldest=Max('authors__age'))
+    >>> for book_group in books:
+    ...    print 'price', book_group['price'], 'oldest', book_group['oldest']
+    ...
+    price 29.69 oldest 37.0
+    price 75.0 oldest 57.0
+    price 82.8 oldest 57.0
+    price 23.09 oldest 45.0
+    price 30.0 oldest 35.0
+
+Note that aplying values after annotate() does not have the same
+efect. It reduces the output but no grouping is made:
+
+    >>> books = Book.objects.annotate(Max('authors__age')).values('price') #An entry for every Book
+    >>> for i in books:
+    ...    print 'price', i['price'], 'max', i['authors__age__max']
+
+    price 23.09 max 45.0
+    price 29.69 max 37.0
+    price 75.0 max 57.0
+    price 82.8 max 57.0
+    price 30.0 max 35.0
+    price 29.69 max 29.0
+
+    >>> len(Book.objects.annotate(Max('authors__age')).values('price')) #An entry for every Book
+    6
+
+    >>> len(Book.objects.values('price').annotate(Max('authors__age'))) #Books are grouped by price
+    5
+
+grouped_objects
+~~~~~~~~~~~~~~~
+
+Also, after doing an annotation, one might need to recover the
+elements that were grouped to do the calculation. To do this, the
+grouped_objects argument to annotate is provided. This argument, if
+True, changes the output format so the result is a list of tuples
+containing the values of the grouping and a queryset to retreive the
+the objects that were grouped.
+
+This changes the output in a way that for each result there's a tuple
+containing the result of the aggregation and a queryset to retrieve
+the objects that were grouped
+
+    >>> books = Book.objects.values('price').annotate(oldest=Max('authors__age'), grouped_objects=True)
+    >>> books[0]
+    ({'price': 29.690000000000001, 'oldest': 37.0},
+     [<Book: Practical Django Projects>, <Book: Python Web Development with Django>])
+
+.. note:: 
+
+   As normal querysets the queryset returned by ``grouped_objects`` is
+   lazy and will not be executed until it is evaluated. So if the
+   objects change before evaluating the queryset the aggregated result
+   might not hold.
+
+
+filtering
+~~~~~~~~~
+
+Another thing you might need is to retreive only certain objects based
+on the result of a calculation. To do this the filtering syntax is
+used on the alias of the annotation. See filter(link) for more
+information on the lookups.
+
+There are four different types of filtering that you might be
+interested in. Each of this have adiferent representation.
+
+    * Simple filtering on the annotations
+
+          an example of this is retreiving the "Publishers that have more than one book"
+
+            >>> Publisher.objects.annotate(num_books=Count('book__id')).filter(num_books__gt=1).order_by('pk')
+            [<Publisher: Apress >, <Publisher: Prentice Hall>, <Publisher: Expensive Publisher>]
+
+    * Simple filtering on the whole set
+
+          This is a normal, un-related to aggregation, filter. "Publishers that have books that cost les than 40"
+
+             >>> Publisher.objects.filter(book__price__lt=40).order_by('pk')
+             [<Publisher: Apress >, <Publisher: Apress >, <Publisher: Sams>, <Publisher: Prentice Hall>, <Publisher: Expensive Publisher>]
+
+    * Annotationg on the whole set and filtering on annotations
+
+          "Publishers that have more than one book and (at least) a book that cost less than 40"
+
+             >>> Publisher.objects.annotate(num_books=Count('book__id')).filter(num_books__gt=1, book__price__lt=40).order_by('pk')
+             [<Publisher: Apress >, <Publisher: Prentice Hall>, <Publisher: Expensive Publisher>]
+
+    * Filtering and annotating on the whole set
+
+          "Publishers that have more than one book that costs less than 40"
+
+             >>> Publisher.objects.filter(book__price__lt=40).annotate(num_books=Count('book__id')).filter(num_books__gt=1).order_by('pk')
+             [<Publisher: Apress >]
+
+The reason for this types of filtering to exist is because the
+filtering results vary depending whether they are done in a join of
+two models or the single model. When you need the filtering to be done
+on the model and not the join of two models the filtering must be done
+before calling the annotation. If, on the contrary, the filtering
+should be done on the result of the joining it must be done after
+annotating.
+
+Aggregating on annotated values
+-------------------------------
+
+It is possible to apply ``aggregate()`` on the result of an annotation
+that does not gorup objects. Doing this will generate a subquery for
+the annotated objects and calculate the aggregation on top of it.
+
+This way, if you wanted to calculate the average number of authors per
+book you could do::
+
+    >>> Book.objects.all().annotate(num_authors=Count('authors__id')).aggregate(Avg('num_authors'))
+    {'num_authors__avg': 1.66...}
+

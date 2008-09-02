@@ -15,7 +15,7 @@ from django.utils.encoding import force_unicode
 from django.db import connection
 from django.db.models import signals
 from django.db.models.fields import FieldDoesNotExist
-from django.db.models.query_utils import select_related_descend
+from django.db.models.query_utils import select_related_descend, _value_or_object
 from django.db.models.sql.where import WhereNode, EverythingNode, AND, OR
 from django.db.models.sql.datastructures import Count
 from django.core.exceptions import FieldError
@@ -57,6 +57,7 @@ class Query(object):
         self.start_meta = None
         self.select_fields = []
         self.related_select_fields = []
+        self.allow_nulls = False
         self.dupe_avoidance = {}
 
         # SQL-related attributes
@@ -165,6 +166,7 @@ class Query(object):
         obj.standard_ordering = self.standard_ordering
         obj.ordering_aliases = []
         obj.start_meta = self.start_meta
+        obj.allow_nulls = self.allow_nulls
         obj.select_fields = self.select_fields[:]
         obj.related_select_fields = self.related_select_fields[:]
         obj.dupe_avoidance = self.dupe_avoidance.copy()
@@ -209,6 +211,43 @@ class Query(object):
                             fields = self.model._meta.fields
                     row = self.resolve_columns(row, fields)
                 yield row
+
+    def get_aggregation(self):
+        """
+        Returns the dictionary with the values of the existing aggregations.
+        """
+        if not self.select:
+            return {}
+        
+        #If there is a group by clause aggregating does not add useful
+        #information but retrieves only the first row. Aggregating
+        #over the subquery instead.
+        if self.group_by:
+            from subqueries import AggregateQuery
+            obj = self.clone()
+            external = []
+            select = [i for i in enumerate(obj.select)]
+            deleted = 0
+            for (i, field) in select:            
+                if hasattr(field, 'reduce') and field.reduce:
+                    external.append(field)
+                    del obj.select[i-deleted]
+                    deleted += 1
+            query = AggregateQuery(self.model, self.connection)
+            query.add_select(external)
+            query.add_subquery(obj)
+
+            data = [_value_or_object(x) for x in query.execute_sql(SINGLE)]
+            result = dict(zip([i.aliased_name for i in query.select], data))
+            return result
+
+        self.select = self.get_aggregate_list()
+        self.extra_select = {}
+
+        data = [_value_or_object(x) for x in self.execute_sql(SINGLE)]
+        result = dict(zip([i.aliased_name for i in self.select], data))
+
+        return result
 
     def get_count(self):
         """
@@ -282,8 +321,34 @@ class Query(object):
             result.append(' AND '.join(self.extra_where))
 
         if self.group_by:
-            grouping = self.get_grouping()
-            result.append('GROUP BY %s' % ', '.join(grouping))
+            result.append('GROUP BY %s' % ', '.join(self.get_grouping()))
+
+        having = []
+        having_params = []
+        if self.having:
+            qn = self.quote_name_unless_alias
+            for (aggregate, lookup_type, value) in self.having:
+                if lookup_type == 'in':
+                    having.append('%s IN (%s)' % (aggregate.as_sql(quote_func=qn),
+                                                  ', '.join(['%s'] * len(value))))
+                    having_params.extend(value)
+                elif lookup_type == 'range':
+                    having.append('%s BETWEEN %%s and %%s' %
+                                  aggregate.as_sql(quote_func=qn))
+                    having_params.extend([value[0], value[1]])
+                elif lookup_type == 'isnull':
+                    having.append('%s IS %sNULL' % (aggregate.as_sql(quote_func=qn),
+                                                    (not value and "NOT " or '')))
+                else:
+                    if lookup_type not in connection.operators:
+                        raise TypeError('Invalid lookup_type: %r' % lookup_type)
+                        
+                    having.append('%s %s' % (aggregate.as_sql(quote_func=qn),
+                                             connection.operators[lookup_type]))
+                    having_params.append(value)
+                    
+            having_clause = 'HAVING ' + ' AND '.join(having)
+            result.append(having_clause)
 
         if ordering:
             result.append('ORDER BY %s' % ', '.join(ordering))
@@ -299,6 +364,7 @@ class Query(object):
                 result.append('OFFSET %d' % self.low_mark)
 
         params.extend(self.extra_params)
+        params.extend(having_params)
         return ' '.join(result), tuple(params)
 
     def combine(self, rhs, connector):
@@ -401,6 +467,8 @@ class Query(object):
             self.join((None, self.model._meta.db_table, None, None))
         if self.select_related and not self.related_select_cols:
             self.fill_related_selections()
+        if self.allow_nulls:
+            self.promote_all()
 
     def get_columns(self, with_aliases=False):
         """
@@ -424,20 +492,31 @@ class Query(object):
             for col in self.select:
                 if isinstance(col, (list, tuple)):
                     r = '%s.%s' % (qn(col[0]), qn(col[1]))
-                    if with_aliases and col[1] in col_aliases:
-                        c_alias = 'Col%d' % len(col_aliases)
-                        result.append('%s AS %s' % (r, c_alias))
-                        aliases.add(c_alias)
-                        col_aliases.add(c_alias)
+                    if with_aliases:
+                        if col[1] in col_aliases:
+                            c_alias = 'Col%d' % len(col_aliases)
+                            result.append('%s AS %s' % (r, c_alias))
+                            aliases.add(c_alias)
+                            col_aliases.add(c_alias)
+                        else:
+                            result.append('%s AS %s' % (r, col[1]))
+                            aliases.add(r)
+                            col_aliases.add(col[1])
                     else:
                         result.append(r)
                         aliases.add(r)
                         col_aliases.add(col[1])
                 else:
-                    result.append(col.as_sql(quote_func=qn))
+                    if hasattr(col, 'aliased_name'):
+                        result.append('%s AS %s' % (col.as_sql(quote_func=qn),
+                                                    col.aliased_name))
+                    else:
+                        result.append(col.as_sql(quote_func=qn))
+
                     if hasattr(col, 'alias'):
                         aliases.add(col.alias)
                         col_aliases.add(col.alias)
+                        
         elif self.default_cols:
             cols, new_aliases = self.get_default_columns(with_aliases,
                     col_aliases)
@@ -591,7 +670,19 @@ class Query(object):
             asc, desc = ORDER_DIR['ASC']
         else:
             asc, desc = ORDER_DIR['DESC']
+
         for field in ordering:
+            found = False
+            for aggregate in self.get_aggregate_list():
+                if aggregate.aliased_name in field:
+                    if field[0] == '-':
+                        order = desc
+                    else:
+                        order = asc
+                    result.append('%s %s' % (aggregate.as_sql(), order))
+                    found = True
+            if found:
+                continue
             if field == '?':
                 result.append(self.connection.ops.random_function_sql())
                 continue
@@ -719,6 +810,11 @@ class Query(object):
         """ Decreases the reference count for this alias. """
         self.alias_refcount[alias] -= 1
 
+    def promote_all(self):
+        """ Promotes every alias """
+        for alias in self.alias_map:
+            self.promote_alias(alias, unconditional=True)
+        
     def promote_alias(self, alias, unconditional=False):
         """
         Promotes the join type of an alias to an outer join if it's possible
@@ -823,6 +919,18 @@ class Query(object):
             alias = self.join((None, self.model._meta.db_table, None, None))
         return alias
 
+    def is_aggregate(self, obj):
+        from django.db.aggregates import Aggregate
+        return isinstance(obj, Aggregate)
+
+    def get_aggregate_list(self, attribute=None):
+        from django.db.aggregates import Aggregate
+        if not attribute:
+            return [x for x in self.select if isinstance(x, Aggregate)]
+        else:
+            return [getattr(x, attribute) for x in self.select
+                    if isinstance(x, Aggregate)]
+            
     def count_active_tables(self):
         """
         Returns the number of tables in this query with a non-zero reference
@@ -993,6 +1101,39 @@ class Query(object):
             self.fill_related_selections(f.rel.to._meta, alias, cur_depth + 1,
                     used, next, restricted, new_nullable, dupe_set)
 
+    def add_aggregate(self, aggregate_expr, model):
+        """
+        Adds a single aggregate expression to the Query
+        """
+        opts = model._meta
+
+        #Do not waste time in checking the joins if it's an aggregate
+        #on an annotation
+        if (self.group_by and aggregate_expr.reduce):
+            self.select.append(aggregate_expr)
+            return
+        
+        field_list = aggregate_expr.lookup.split(LOOKUP_SEP)
+
+        if (len(field_list) > 1 or
+            field_list[0] not in [i.name for i in opts.fields]):
+            
+            field, target, opts, join_list, last = self.setup_joins(
+                field_list, opts, self.get_initial_alias(), False)
+
+            self.allow_nulls = True            
+            aggregate_expr.column = target.column
+
+            field_name = field_list.pop()
+            aggregate_expr.col_alias = join_list[-1]
+        else:
+            field_name = field_list[0]
+            aggregate_expr.col_alias = opts.db_table
+
+            fields = dict([(field.name, field) for field in opts.fields])
+            aggregate_expr.column = fields[field_name].column
+        self.select.append(aggregate_expr)        
+
     def add_filter(self, filter_expr, connector=AND, negate=False, trim=False,
             can_reuse=None):
         """
@@ -1040,6 +1181,11 @@ class Query(object):
         alias = self.get_initial_alias()
         allow_many = trim or not negate
 
+        for i in self.get_aggregate_list():
+            if i.aliased_name == parts[0] :
+                self.having.append((i, lookup_type, value))
+                return
+        
         try:
             field, target, opts, join_list, last = self.setup_joins(parts, opts,
                     alias, True, allow_many, can_reuse=can_reuse)
@@ -1415,13 +1561,22 @@ class Query(object):
         """
         return not (self.low_mark or self.high_mark)
 
-    def add_fields(self, field_names, allow_m2m=True):
+    def add_fields(self, field_names, allow_m2m=True, rebuild=False):
         """
         Adds the given (model) fields to the select set. The field names are
         added in the order specified.
+
+        If rebuild is True, the field list is rebuilded from scratch
+        keeping only the aggregate objects.
         """
         alias = self.get_initial_alias()
         opts = self.get_meta()
+
+        aggregates = []
+        if rebuild:
+            aggregates = self.get_aggregate_list()
+            self.select = []
+            
         try:
             for name in field_names:
                 field, target, u2, joins, u3 = self.setup_joins(
@@ -1451,6 +1606,7 @@ class Query(object):
             names.sort()
             raise FieldError("Cannot resolve keyword %r into field. "
                     "Choices are: %s" % (name, ", ".join(names)))
+        self.select.extend(aggregates)
 
     def add_ordering(self, *ordering):
         """
@@ -1481,6 +1637,18 @@ class Query(object):
         self.extra_order_by = ()
         if force_empty:
             self.default_ordering = False
+
+    def set_group_by(self):
+        if self.connection.features.allows_group_by_pk: 
+            if len(self.select) == len(self.model._meta.fields):
+                #there might be problems with the aliases here. check.
+                self.group_by.append('.'.join([self.model._meta.db_table,
+                                               self.model._meta.pk.column]))
+                return
+
+        for sel in self.select:
+            if not self.is_aggregate(sel):
+                self.group_by.append(sel)
 
     def add_count_column(self):
         """

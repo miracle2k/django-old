@@ -65,3 +65,8 @@ def select_related_descend(field, restricted, requested):
         return False
     return True
 
+def _value_or_object(obj):
+    try:
+        return float(obj)
+    except:
+        return obj

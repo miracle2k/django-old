@@ -588,6 +588,10 @@ ordering piece of data for each of the main items you are selecting, the
 ordering may well be exactly what you want to do. Use ordering on multi-valued
 fields with care and make sure the results are what you expect.
 
+**New in Django development version:** When using aggregation it is
+possible to order fields by the aggregated value's alias in the same
+way as ordering by a model field.
+
 **New in Django development version:** If you don't want any ordering to be
 applied to a query, not even the default ordering, call ``order_by()`` with no
 parameters.

@@ -62,6 +62,7 @@ class BaseDatabaseWrapper(local):
         return util.CursorDebugWrapper(cursor, self)
 
 class BaseDatabaseFeatures(object):
+    allows_group_by_pk = False
     # True if django.db.backend.utils.typecast_timestamp is used on values
     # returned from dates() calls.
     needs_datetime_string_cast = True

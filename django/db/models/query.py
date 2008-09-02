@@ -4,8 +4,9 @@ except NameError:
     from sets import Set as set     # Python 2.3 fallback
 
 from django.db import connection, transaction, IntegrityError
+from django.db.aggregates import Aggregate
 from django.db.models.fields import DateField
-from django.db.models.query_utils import Q, select_related_descend
+from django.db.models.query_utils import Q, select_related_descend, _value_or_object
 from django.db.models import signals, sql
 from django.utils.datastructures import SortedDict
 
@@ -263,15 +264,53 @@ class QuerySet(object):
         max_depth = self.query.max_depth
         extra_select = self.query.extra_select.keys()
         index_start = len(extra_select)
-        for row in self.query.results_iter():
+
+        for row in self.query.results_iter():  
             if fill_cache:
-                obj, _ = get_cached_row(self.model, row, index_start,
-                        max_depth, requested=requested)
+                obj, aggregate_start = get_cached_row(self.model, row,
+                                    index_start, max_depth, requested=requested)
             else:
-                obj = self.model(*row[index_start:])
+                aggregate_start = index_start + len(self.model._meta.fields) 
+                #ommit aggregates in object creation
+                obj = self.model(*row[index_start:aggregate_start])
+                
             for i, k in enumerate(extra_select):
                 setattr(obj, k, row[i])
+                        
+            data_length = len(row)
+            if aggregate_start < data_length:
+                #the aggregate values retreived from the backend 
+                aggregate_values = [_value_or_object(row[i])
+                                    for i in range(aggregate_start, data_length)]
+
+                select =  self.query.extra_select.keys() + self.query.select
+                #Add the attributes to the model
+                new_values = dict(zip(
+                    [select[i].aliased_name
+                     for i in range(aggregate_start, len(select))],
+                    aggregate_values))
+                
+                obj.__dict__.update(new_values)
+
             yield obj
+
+    def aggregate(self, *args, **kwargs):
+        """
+        Returns a dictionary containing the calculations (aggregation)
+        over the current queryset
+        
+        If args is present the expression is passed as a kwarg ussing
+        the Aggregate object's default alias.
+        """
+        for arg in args:
+            kwargs[arg.aliased_name] = arg
+
+        for (alias, aggregate_expr) in kwargs.items():
+            aggregate_expr.aliased_name = alias
+            aggregate_expr.reduce = True
+            self.query.add_aggregate(aggregate_expr, self.model)
+
+        return self.query.get_aggregation()
 
     def count(self):
         """
@@ -544,6 +583,35 @@ class QuerySet(object):
         """
         self.query.select_related = other.query.select_related
 
+    def annotate(self, *args, **kwargs):
+        self.return_groups = kwargs.get('grouped_objects')
+        try:
+            del kwargs['grouped_objects']
+        except:
+            pass
+        
+        for arg in args:
+            kwargs[arg.aliased_name] = arg
+
+        opts = self.model._meta
+        obj = self._clone(return_groups=self.return_groups)
+
+        if isinstance(obj, ValuesQuerySet):
+            obj.query.set_group_by()
+            #obj.query.group_by.extend(obj.query.select[:])
+            
+        if not obj.query.group_by:
+            field_names = [f.attname for f in opts.fields]
+            obj.query.add_fields(field_names, False)
+            obj.query.set_group_by()
+
+        for (alias, aggregate_expr) in kwargs.items():
+            aggregate_expr.aliased_name = alias
+            aggregate_expr.reduce = False
+            obj.query.add_aggregate(aggregate_expr, self.model)
+
+        return obj
+
     def order_by(self, *field_names):
         """
         Returns a new QuerySet instance with the ordering changed.
@@ -615,7 +683,6 @@ class QuerySet(object):
         """
         pass
 
-
 class ValuesQuerySet(QuerySet):
     def __init__(self, *args, **kwargs):
         super(ValuesQuerySet, self).__init__(*args, **kwargs)
@@ -630,8 +697,27 @@ class ValuesQuerySet(QuerySet):
             len(self.field_names) != len(self.model._meta.fields)):
             self.query.trim_extra_select(self.extra_names)
         names = self.query.extra_select.keys() + self.field_names
+        names.extend([x.aliased_name for x in self.query.select
+                      if isinstance(x, Aggregate)])
+        aggregate_start = len(self._fields) or len(self.model._meta.fields)
+
         for row in self.query.results_iter():
-            yield dict(zip(names, row))
+            normalized_row = list(row)
+            for i in range(aggregate_start, len(normalized_row)):
+                normalized_row[i] = _value_or_object(normalized_row[i])
+
+            num_fields = len(self.model._meta.fields)
+            has_grouping = (len(row) > aggregate_start and
+                            len(self.field_names) < num_fields and
+                            len(self.query.group_by) < num_fields)
+            
+            #Grouped objects QuerySet
+            if (hasattr(self, 'return_groups') and self.return_groups):
+                restrictions = dict(zip(names, normalized_row[:aggregate_start]))
+                group_query = self.model.objects.filter(**restrictions)            
+                yield (dict(zip(names, normalized_row)), group_query)
+            else:
+                yield dict(zip(names, normalized_row))
 
     def _setup_query(self):
         """
@@ -640,7 +726,7 @@ class ValuesQuerySet(QuerySet):
 
         Called by the _clone() method after initializing the rest of the
         instance.
-        """
+        """        
         self.extra_names = []
         if self._fields:
             if not self.query.extra_select:
@@ -656,7 +742,7 @@ class ValuesQuerySet(QuerySet):
             # Default to all fields.
             field_names = [f.attname for f in self.model._meta.fields]
 
-        self.query.add_fields(field_names, False)
+        self.query.add_fields(field_names, False, rebuild=True)
         self.query.default_cols = False
         self.field_names = field_names
 
