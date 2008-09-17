@@ -351,7 +351,9 @@ class Model(object):
         if pk_set:
             # Determine whether a record with the primary key already exists.
             if (force_update or (not force_insert and
-                    manager.filter(pk=pk_val).extra(select={'a': 1}).values('a').order_by())):
+                    manager.filter(pk=pk_val).\
+						extra(select=False, where=False, params=False, tables=False, order_by=False).\
+						extra(select={'a': 1}).values('a').order_by())):
                 # It does already exist, so do an UPDATE.
                 if force_update or non_pks:
                     values = [(f, None, f.get_db_prep_save(raw and getattr(self, f.attname) or f.pre_save(self, False))) for f in non_pks]
