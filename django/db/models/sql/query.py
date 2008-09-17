@@ -1649,14 +1649,28 @@ class Query(object):
                 select_pairs[name] = (entry, entry_params)
             # This is order preserving, since self.extra_select is a SortedDict.
             self.extra_select.update(select_pairs)
+        elif select is not None:
+            self.extra_select = SortedDict()
+
         if where:
             self.extra_where += tuple(where)
+        elif where is not None:
+            self.extra_where = ()
+
         if params:
             self.extra_params += tuple(params)
+        elif params is not None:
+            self.extra_where = ()
+            
         if tables:
             self.extra_tables += tuple(tables)
+        elif tables is not None:
+            self.extra_tables = ()
+
         if order_by:
             self.extra_order_by = order_by
+        elif order_by is not None:
+            self.extra_order_by = ()
 
     def trim_extra_select(self, names):
         """
