@@ -372,7 +372,7 @@ class Templates(unittest.TestCase):
 
             # Numbers as filter arguments should work
             'filter-syntax19': ('{{ var|truncatewords:1 }}', {"var": "hello world"}, "hello ..."),
-            
+
             #filters should accept empty string constants
             'filter-syntax20': ('{{ ""|default_if_none:"was none" }}', {}, ""),
 
@@ -731,6 +731,24 @@ class Templates(unittest.TestCase):
 
             # Inheritance from a template that doesn't have any blocks
             'inheritance27': ("{% extends 'inheritance26' %}", {}, 'no tags'),
+
+            # Setup a template to be included by base template
+            'inheritance28': ("{% block included %}2{% endblock %}", {}, '2'),
+
+            # Setup a base template with an include
+            'inheritance29': ("1{% include 'inheritance28' %}3", {}, '123'),
+
+            # Inheritance with overriding a block included by the parent
+            'inheritance30': ("{% extends 'inheritance29' %}{% block included %}&{% endblock %}", {}, '1&3'),
+
+            # Setup a template to be included by child template
+            'inheritance31': ("{% block included %}_{% endblock %}", {}, '_'),
+
+            # Inheritance with overriding a block through an include
+            'inheritance32': ("{% extends 'inheritance28' %}{% include 'inheritance31' %}", {}, '_'),
+
+            # Inheritance with overriding a block included by the parent through an include in the child template (combine 30+32)
+            'inheritance33': ("{% extends 'inheritance29' %}{% include 'inheritance31' %}", {}, '1_3'),
 
             ### I18N ##################################################################
 
