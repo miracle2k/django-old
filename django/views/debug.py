@@ -4,7 +4,7 @@ import sys
 import datetime
 
 from django.conf import settings
-from django.template import Template, Context, TemplateDoesNotExist
+from django.template import Template, Context, TemplateDoesNotExist, Origin
 from django.utils.html import escape
 from django.http import HttpResponse, HttpResponseServerError, HttpResponseNotFound
 from django.utils.encoding import smart_unicode, smart_str
@@ -78,8 +78,10 @@ class ExceptionReporter:
                     'loader': loader.__module__ + '.' + loader.__name__,
                     'templates': template_list,
                 })
-        if settings.TEMPLATE_DEBUG and hasattr(self.exc_value, 'source'):
-            self.get_template_exception_info()
+        if settings.TEMPLATE_DEBUG and hasattr(self.exc_value, 'source') and \
+           isinstance(self.exc_value.source, (list, tuple)) and \
+           len(self.exc_value.source)==2 and isinstance(self.exc_value[0], Origin):
+                self.get_template_exception_info()
 
         frames = self.get_traceback_frames()
 
