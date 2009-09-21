@@ -389,11 +389,15 @@ ValueError: When aggregating over an expression, you need to give an alias.
 >>> Book.objects.values('rating').annotate(oldest=Max(F('authors__age')))
 [{'rating': 3.0, 'oldest': 45}, {'rating': 4.0, 'oldest': 57}, {'rating': 4.5, 'oldest': 35}, {'rating': 5.0, 'oldest': 57}]
 
+# Annotation just specifying a single field using F which does not span any tables.
+>>> Book.objects.values('rating').annotate(price=Max(F('price')))[:1]
+[{'rating': 3.0, 'price': 23.09}]
+
 # Annotate an expression.
 >>> Book.objects.values('id').annotate(foo=Max(F('authors__age')-F('authors__age')))
 [{'foo': 0, 'id': 1}, {'foo': 0, 'id': 2}, {'foo': 0, 'id': 3}, {'foo': 0, 'id': 4}, {'foo': 0, 'id': 5}, {'foo': 0, 'id': 6}]
 
 # XXX: explictely test aggregate type that does not force a output type (ordinal, computed...) vs one that does
 # XXX: explictely test outer join scenario
-# XXX: make this possible: Book.objects.values('id').annotate(page_price=Avg(F('price') / F('pages')))
+# XXX: make this possible: Book.objects.values('id').annotate(page_price=F('price') / F('pages'))
 """}

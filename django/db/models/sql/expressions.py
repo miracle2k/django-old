@@ -34,7 +34,7 @@ class SQLEvaluator(object):
 
         field_list = node.name.split(LOOKUP_SEP)
         if (len(field_list) == 1 and
-            node.name in query.aggregate_select.keys()):
+            node.name in query.aggregates.keys()):
             self.contains_aggregate = True
             self.cols[node] = query.aggregate_select[node.name]
         else:
