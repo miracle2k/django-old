@@ -362,4 +362,38 @@ True
 >>> Book.objects.filter(pk=1).annotate(mean_age=Avg('authors__age')).values_list('mean_age', flat=True)
 [34.5]
 
+
+# Testing with expressions
+>>> from django.db.models import F
+
+# Default aliases are not supported when aggregating over expressions
+>>> Author.objects.all().aggregate(Avg(F('age')))
+Traceback (most recent call last):
+...
+ValueError: When aggregating over an expression, you need to give an alias.
+
+# Aggregation while just specifying a single field using F
+>>> Author.objects.all().aggregate(age__avg=Avg(F('age')))
+{'age__avg': 37.4...}
+
+# Aggregation over an expression.
+>>> Book.objects.all().aggregate(page_price=Avg(F('price') / F('pages')))
+{'page_price': 0.050...}
+
+# Aggregation over an expression with an external value, requiring
+# formatting to happen internally.
+>>> Book.objects.all().aggregate(price__avg=Avg(F('price')*0.8))
+{'price__avg': 36.0...}
+
+# Annotation while just specifying a single field using F
+>>> Book.objects.values('rating').annotate(oldest=Max(F('authors__age')))
+[{'rating': 3.0, 'oldest': 45}, {'rating': 4.0, 'oldest': 57}, {'rating': 4.5, 'oldest': 35}, {'rating': 5.0, 'oldest': 57}]
+
+# Annotate an expression.
+>>> Book.objects.values('id').annotate(foo=Max(F('authors__age')-F('authors__age')))
+[{'foo': 0, 'id': 1}, {'foo': 0, 'id': 2}, {'foo': 0, 'id': 3}, {'foo': 0, 'id': 4}, {'foo': 0, 'id': 5}, {'foo': 0, 'id': 6}]
+
+# XXX: explictely test aggregate type that does not force a output type (ordinal, computed...) vs one that does
+# XXX: explictely test outer join scenario
+# XXX: make this possible: Book.objects.values('id').annotate(page_price=Avg(F('price') / F('pages')))
 """}

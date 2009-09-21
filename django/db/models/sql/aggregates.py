@@ -66,10 +66,18 @@ class Aggregate(object):
             else:
                 tmp = tmp.source
 
+        # If no source field is available, say in case we aggregate
+        # over an expression, assume that we are computing the value.
+        if tmp is None:
+            tmp = computed_aggregate_field
+
         self.field = tmp
 
     def relabel_aliases(self, change_map):
-        if isinstance(self.col, (list, tuple)):
+        if hasattr(self.col, 'relabel_aliases'):
+            # If used with expressions, that col is a SQLEvalutator instance
+            self.col.relabel_aliases(change_map)
+        elif isinstance(self.col, (list, tuple)):
             self.col = (change_map.get(self.col[0], self.col[0]), self.col[1])
 
     def as_sql(self, quote_func=None):
@@ -77,20 +85,21 @@ class Aggregate(object):
         if not quote_func:
             quote_func = lambda x: x
 
+        params = []
         if hasattr(self.col, 'as_sql'):
-            field_name = self.col.as_sql(quote_func)
+            field_name, params = self.col.as_sql(quote_func)
         elif isinstance(self.col, (list, tuple)):
             field_name = '.'.join([quote_func(c) for c in self.col])
         else:
             field_name = self.col
 
-        params = {
+        fargs = {
             'function': self.sql_function,
             'field': field_name
         }
-        params.update(self.extra)
+        fargs.update(self.extra)
 
-        return self.sql_template % params
+        return self.sql_template % fargs, params
 
 
 class Avg(Aggregate):

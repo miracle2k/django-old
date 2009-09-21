@@ -4,13 +4,13 @@ from django.db.models.fields import FieldDoesNotExist
 from django.db.models.sql.constants import LOOKUP_SEP
 
 class SQLEvaluator(object):
-    def __init__(self, expression, query, allow_joins=True):
+    def __init__(self, expression, query, allow_joins=True, promote_joins=False):
         self.expression = expression
         self.opts = query.get_meta()
         self.cols = {}
 
         self.contains_aggregate = False
-        self.expression.prepare(self, query, allow_joins)
+        self.expression.prepare(self, query, allow_joins, promote_joins)
 
     def as_sql(self, qn=None):
         return self.expression.evaluate(self, qn)
@@ -23,12 +23,12 @@ class SQLEvaluator(object):
     # Vistor methods for initial expression preparation #
     #####################################################
 
-    def prepare_node(self, node, query, allow_joins):
+    def prepare_node(self, node, query, allow_joins, promote_joins):
         for child in node.children:
             if hasattr(child, 'prepare'):
-                child.prepare(self, query, allow_joins)
+                child.prepare(self, query, allow_joins, promote_joins)
 
-    def prepare_leaf(self, node, query, allow_joins):
+    def prepare_leaf(self, node, query, allow_joins, promote_joins):
         if not allow_joins and LOOKUP_SEP in node.name:
             raise FieldError("Joined field references are not permitted in this query")
 
@@ -43,6 +43,10 @@ class SQLEvaluator(object):
                     field_list, query.get_meta(),
                     query.get_initial_alias(), False)
                 col, _, join_list = query.trim_joins(source, join_list, last, False)
+
+                if promote_joins:
+                    for column_alias in join_list:
+                        query.promote_alias(column_alias, unconditional=True)
 
                 self.cols[node] = (join_list[-1], col)
             except FieldDoesNotExist:

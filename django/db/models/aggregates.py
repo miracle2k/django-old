@@ -20,6 +20,8 @@ class Aggregate(object):
         self.extra = extra
 
     def _default_alias(self):
+        if hasattr(self.lookup, 'evaluate'):
+            raise ValueError('When aggregating over an expression, you need to give an alias.')
         return '%s__%s' % (self.lookup, self.name.lower())
     default_alias = property(_default_alias)
 

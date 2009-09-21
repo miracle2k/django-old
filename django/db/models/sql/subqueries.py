@@ -426,12 +426,14 @@ class AggregateQuery(Query):
         Creates the SQL for this query. Returns the SQL string and list of
         parameters.
         """
+        params = []
+        aggregates = []
+        for aggregate in self.aggregate_select.values():
+            s, p = aggregate.as_sql()
+            aggregates.append(s)
+            params.extend(p)
+
         sql = ('SELECT %s FROM (%s) subquery' % (
-            ', '.join([
-                aggregate.as_sql()
-                for aggregate in self.aggregate_select.values()
-            ]),
-            self.subquery)
+            ', '.join(aggregates), self.subquery)
         )
-        params = self.sub_params
-        return (sql, params)
+        return (sql, tuple(params) + self.sub_params)

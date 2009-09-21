@@ -152,6 +152,12 @@ class WhereNode(tree.Node):
             # A smart object with an as_sql() method.
             field_sql = lvalue.as_sql(quote_func=qn)
 
+        # If lvalue is an aggregate, then as_sql() returns params also
+        field_params = []
+        if len(field_sql) == 2:
+            field_sql, field_params = field_sql
+        field_params = field_params
+
         if value_annot is datetime.datetime:
             cast_sql = connection.ops.datetime_cast_sql()
         else:
@@ -167,23 +173,23 @@ class WhereNode(tree.Node):
             format = "%s %%s %%s" % (connection.ops.lookup_cast(lookup_type),)
             return (format % (field_sql,
                               connection.operators[lookup_type] % cast_sql,
-                              extra), params)
+                              extra), field_params+params)
 
         if lookup_type == 'in':
             if not value_annot:
                 raise EmptyResultSet
             if extra:
-                return ('%s IN %s' % (field_sql, extra), params)
+                return ('%s IN %s' % (field_sql, extra), field_params+params)
             return ('%s IN (%s)' % (field_sql, ', '.join(['%s'] * len(params))),
-                    params)
+                    field_params+params)
         elif lookup_type in ('range', 'year'):
-            return ('%s BETWEEN %%s and %%s' % field_sql, params)
+            return ('%s BETWEEN %%s and %%s' % field_sql, field_params+params)
         elif lookup_type in ('month', 'day', 'week_day'):
             return ('%s = %%s' % connection.ops.date_extract_sql(lookup_type, field_sql),
-                    params)
+                    params+field_params)
         elif lookup_type == 'isnull':
             return ('%s IS %sNULL' % (field_sql,
-                (not value_annot and 'NOT ' or '')), ())
+                (not value_annot and 'NOT ' or '')), field_params)
         elif lookup_type == 'search':
             return (connection.ops.fulltext_search_sql(field_sql), params)
         elif lookup_type in ('regex', 'iregex'):

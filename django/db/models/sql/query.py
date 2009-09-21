@@ -298,13 +298,16 @@ class BaseQuery(object):
                     row = self.resolve_columns(row, fields)
 
                 if self.aggregate_select:
-                    aggregate_start = len(self.extra_select.keys()) + len(self.select)
-                    aggregate_end = aggregate_start + len(self.aggregate_select)
-                    row = tuple(row[:aggregate_start]) + tuple([
-                        self.resolve_aggregate(value, aggregate)
-                        for (alias, aggregate), value
-                        in zip(self.aggregate_select.items(), row[aggregate_start:aggregate_end])
-                    ]) + tuple(row[aggregate_end:])
+                    try:
+                        aggregate_start = len(self.extra_select.keys()) + len(self.select)
+                        aggregate_end = aggregate_start + len(self.aggregate_select)
+                        row = tuple(row[:aggregate_start]) + tuple([
+                            self.resolve_aggregate(value, aggregate)
+                            for (alias, aggregate), value
+                            in zip(self.aggregate_select.items(), row[aggregate_start:aggregate_end])
+                        ]) + tuple(row[aggregate_end:])
+                    except Exception, e:
+                        print "error", e
 
                 yield row
 
@@ -393,7 +396,7 @@ class BaseQuery(object):
         in the query.
         """
         self.pre_sql_setup()
-        out_cols = self.get_columns(with_col_aliases)
+        out_cols, s_params = self.get_columns(with_col_aliases)
         ordering, ordering_group_by = self.get_ordering()
 
         # This must come after 'select' and 'ordering' -- see docstring of
@@ -406,6 +409,9 @@ class BaseQuery(object):
         params = []
         for val in self.extra_select.itervalues():
             params.extend(val[1])
+        # Currently only aggregation-related params, and aggregation
+        # comes after manual extra select clauses.
+        params.extend(s_params)
 
         result = ['SELECT']
         if self.distinct:
@@ -460,6 +466,7 @@ class BaseQuery(object):
                 result.append('OFFSET %d' % self.low_mark)
 
         params.extend(self.extra_params)
+
         return ' '.join(result), tuple(params)
 
     def as_nested_sql(self):
@@ -697,6 +704,7 @@ class BaseQuery(object):
         (without the table names) are given unique aliases. This is needed in
         some cases to avoid ambiguity with nested queries.
         """
+        params = []
         qn = self.quote_name_unless_alias
         qn2 = self.connection.ops.quote_name
         result = ['(%s) AS %s' % (col[0], qn2(alias)) for alias, col in self.extra_select.iteritems()]
@@ -741,13 +749,11 @@ class BaseQuery(object):
             result.extend(cols)
             aliases.update(new_aliases)
 
-        result.extend([
-            '%s%s' % (
-                aggregate.as_sql(quote_func=qn),
-                alias is not None and ' AS %s' % qn(alias) or ''
-            )
-            for alias, aggregate in self.aggregate_select.items()
-        ])
+        for alias, aggregate in self.aggregate_select.items():
+            sql, p = aggregate.as_sql(quote_func=qn)
+            result.append('%s%s' % (
+                sql, alias is not None and ' AS %s' % qn(alias) or ''))
+            params.extend(p)
 
         for table, col in self.related_select_cols:
             r = '%s.%s' % (qn(table), qn(col))
@@ -762,7 +768,7 @@ class BaseQuery(object):
                 col_aliases.add(col)
 
         self._select_aliases = aliases
-        return result
+        return result, params
 
     def get_default_columns(self, with_aliases=False, col_aliases=None,
             start_alias=None, opts=None, as_pairs=False):
@@ -1446,46 +1452,52 @@ class BaseQuery(object):
         Adds a single aggregate expression to the Query
         """
         opts = model._meta
-        field_list = aggregate.lookup.split(LOOKUP_SEP)
-        if (len(field_list) == 1 and
-            aggregate.lookup in self.aggregates.keys()):
-            # Aggregate is over an annotation
-            field_name = field_list[0]
-            col = field_name
-            source = self.aggregates[field_name]
-            if not is_summary:
-                raise FieldError("Cannot compute %s('%s'): '%s' is an aggregate" % (
-                    aggregate.name, field_name, field_name))
-        elif ((len(field_list) > 1) or
-            (field_list[0] not in [i.name for i in opts.fields]) or
-            self.group_by is None or
-            not is_summary):
-            # If:
-            #   - the field descriptor has more than one part (foo__bar), or
-            #   - the field descriptor is referencing an m2m/m2o field, or
-            #   - this is a reference to a model field (possibly inherited), or
-            #   - this is an annotation over a model field
-            # then we need to explore the joins that are required.
 
-            field, source, opts, join_list, last, _ = self.setup_joins(
-                field_list, opts, self.get_initial_alias(), False)
-
-            # Process the join chain to see if it can be trimmed
-            col, _, join_list = self.trim_joins(source, join_list, last, False)
-
-            # If the aggregate references a model or field that requires a join,
-            # those joins must be LEFT OUTER - empty join rows must be returned
-            # in order for zeros to be returned for those aggregates.
-            for column_alias in join_list:
-                self.promote_alias(column_alias, unconditional=True)
-
-            col = (join_list[-1], col)
+        if hasattr(aggregate.lookup, 'evaluate'):
+            # If lookup is a query expression, evaluate it
+            col = SQLEvaluator(aggregate.lookup, self, promote_joins=True)
+            source = None
         else:
-            # The simplest cases. No joins required -
-            # just reference the provided column alias.
-            field_name = field_list[0]
-            source = opts.get_field(field_name)
-            col = field_name
+            field_list = aggregate.lookup.split(LOOKUP_SEP)
+            if (len(field_list) == 1 and
+                aggregate.lookup in self.aggregates.keys()):
+                # Aggregate is over an annotation
+                field_name = field_list[0]
+                col = field_name
+                source = self.aggregates[field_name]
+                if not is_summary:
+                    raise FieldError("Cannot compute %s('%s'): '%s' is an aggregate" % (
+                        aggregate.name, field_name, field_name))
+            elif ((len(field_list) > 1) or
+                (field_list[0] not in [i.name for i in opts.fields]) or
+                self.group_by is None or
+                not is_summary):
+                # If:
+                #   - the field descriptor has more than one part (foo__bar), or
+                #   - the field descriptor is referencing an m2m/m2o field, or
+                #   - this is a reference to a model field (possibly inherited), or
+                #   - this is an annotation over a model field
+                # then we need to explore the joins that are required.
+
+                field, source, opts, join_list, last, _ = self.setup_joins(
+                    field_list, opts, self.get_initial_alias(), False)
+
+                # Process the join chain to see if it can be trimmed
+                col, _, join_list = self.trim_joins(source, join_list, last, False)
+
+                # If the aggregate references a model or field that requires a join,
+                # those joins must be LEFT OUTER - empty join rows must be returned
+                # in order for zeros to be returned for those aggregates.
+                for column_alias in join_list:
+                    self.promote_alias(column_alias, unconditional=True)
+
+                col = (join_list[-1], col)
+            else:
+                # The simplest cases. No joins required -
+                # just reference the provided column alias.
+                field_name = field_list[0]
+                source = opts.get_field(field_name)
+                col = field_name
 
         # Add the aggregate to the query
         alias = truncate_name(alias, self.connection.ops.max_name_length())
@@ -2382,6 +2394,7 @@ class BaseQuery(object):
         else:
             result = iter((lambda: cursor.fetchmany(GET_ITERATOR_CHUNK_SIZE)),
                     self.connection.features.empty_fetchmany_value)
+
         if not self.connection.features.can_use_chunked_reads:
             # If we are using non-chunked reads, we return the same data
             # structure as normally, but ensure it is all read into memory
