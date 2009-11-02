@@ -30,7 +30,7 @@ class Pinger(object):
     ping_url = None
     sitemap_url = None
     
-    def __init__(self, sitemap_url=None, ping_url=None, base=None):
+    def __init__(self, sitemap_url=None, ping_url=None, domain=None):
         self.base = base
         self.sitemap_url = "http://%s%s" % (base or get_current().domain, sitemap_url or get_sitemap_url())
         if ping_url:
@@ -80,13 +80,13 @@ class YahooPinger(Pinger):
         except Exception, e:
             self.logger.error("Yahoo base URL ping failed: %s" % e)
 
-def ping_google(sitemap_url=None, ping_url=None, base=None):
-    GooglePinger(sitemap_url=sitemap_url, base=base).ping()
+def ping_google(sitemap_url=None, ping_url=None, domain=None):
+    GooglePinger(sitemap_url=sitemap_url, domain=domain).ping()
 
-def ping_search_engines(sitemap_url=None, base=None):
+def ping_search_engines(sitemap_url=None, domain=None):
     pingers = getattr(settings, 'SITEMAP_PINGERS', [AskPinger, GooglePinger, LiveSearchPinger, YahooPinger])
     for pinger in pingers:
-        pinger = pinger(sitemap_url=sitemap_url, base=base)
+        pinger = pinger(sitemap_url=sitemap_url, domain=domain)
         pinger.ping()
 
 class Sitemap(object):
