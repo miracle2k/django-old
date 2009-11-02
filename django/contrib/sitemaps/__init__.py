@@ -30,8 +30,9 @@ class Pinger(object):
     ping_url = None
     sitemap_url = None
     
-    def __init__(self, sitemap_url=None, ping_url=None):
-        self.sitemap_url = "http://%s%s" % (Site.objects.get_current().domain, sitemap_url or get_sitemap_url())
+    def __init__(self, sitemap_url=None, ping_url=None, base=None):
+        self.base = base
+        self.sitemap_url = "http://%s%s" % (base or get_current().domain, sitemap_url or get_sitemap_url())
         if ping_url:
             self.ping_url = ping_url
         self.logger = logging.getLogger("django.contrib.sitemaps.%s" % str(self.__class__.__name__))
@@ -68,7 +69,7 @@ class YahooPinger(Pinger):
         super(YahooPinger, self).ping()
         
         try:
-            base_url = "http://%s/" % (Site.objects.get_current().domain)
+            base_url = "http://%s/" % (self.base or get_current().domain)
             if settings.DEBUG:
                 self.logger.debug("Pinging %s with base site URL %s..." % (self.name, base_url))
             params = urllib.urlencode({'sitemap' : base_url})
@@ -79,13 +80,13 @@ class YahooPinger(Pinger):
         except Exception, e:
             self.logger.error("Yahoo base URL ping failed: %s" % e)
 
-def ping_google(sitemap_url=None, ping_url=None):
-    GooglePinger(sitemap_url=sitemap_url).ping()
+def ping_google(sitemap_url=None, ping_url=None, base=None):
+    GooglePinger(sitemap_url=sitemap_url, base=base).ping()
 
-def ping_search_engines(sitemap_url=None):
+def ping_search_engines(sitemap_url=None, base=None):
     pingers = getattr(settings, 'SITEMAP_PINGERS', [AskPinger, GooglePinger, LiveSearchPinger, YahooPinger])
     for pinger in pingers:
-        pinger = pinger(sitemap_url=sitemap_url)
+        pinger = pinger(sitemap_url=sitemap_url, base=base)
         pinger.ping()
 
 class Sitemap(object):
@@ -131,7 +132,7 @@ class Sitemap(object):
 
 class FlatPageSitemap(Sitemap):
     def items(self):
-        current_site = Site.objects.get_current()
+        current_site = get_current(self.request)
         return current_site.flatpage_set.all()
 
 class GenericSitemap(Sitemap):

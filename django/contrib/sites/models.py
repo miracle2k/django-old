@@ -76,13 +76,13 @@ class RequestSite(object):
     def delete(self):
         raise NotImplementedError('RequestSite cannot be deleted.')
 
-def get_current(request):
+def get_current(request=None):
     """
     Checks if contrib.sites is installed and returns either the current
     ``Site`` object from the database or the current ``RequestSite`` object 
     from the request.
     """
-    if Site._meta.installed:
+    if not request or Site._meta.installed:
         current_site = Site.objects.get_current()
     else:
         current_site = RequestSite(request)
