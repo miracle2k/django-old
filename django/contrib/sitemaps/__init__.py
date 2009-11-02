@@ -1,5 +1,8 @@
-from django.core import urlresolvers, paginator
+import logging
 import urllib
+from django.conf import settings
+from django.contrib.sites.models import Site
+from django.core import urlresolvers, paginator
 
 class SitemapNotFound(Exception):
     pass
