@@ -5,7 +5,7 @@ from django.core import urlresolvers
 from django.utils.encoding import smart_str
 from django.core.paginator import EmptyPage, PageNotAnInteger
 
-def index(request, sitemaps):
+def index(request, sitemaps, sitemap_url_name=None):
     current_site = Site.objects.get_current()
     sites = []
     protocol = request.is_secure() and 'https' or 'http'
@@ -14,7 +14,8 @@ def index(request, sitemaps):
             pages = site().paginator.num_pages
         else:
             pages = site.paginator.num_pages
-        sitemap_url = urlresolvers.reverse('django.contrib.sitemaps.views.sitemap', kwargs={'section': section})
+        sitemap_url_name = sitemap_url_name or 'django.contrib.sitemaps.views.sitemap'
+        sitemap_url = urlresolvers.reverse(sitemap_url_name, kwargs={'section': section})
         sites.append('%s://%s%s' % (protocol, current_site.domain, sitemap_url))
         if pages > 1:
             for page in range(2, pages+1):

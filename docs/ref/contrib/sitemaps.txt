@@ -292,6 +292,15 @@ You should create an index file if one of your sitemaps has more than 50,000
 URLs. In this case, Django will automatically paginate the sitemap, and the
 index will reflect that.
 
+If you are not using the vanilla sitemap view (for example, if it is wrapped
+with a caching decorator), name your sitemap view and pass ``sitemap_url_name``
+to the index view::
+
+   url(r'^sitemap.xml$', sitemap_views.index,
+       {'sitemaps': sitemaps, 'sitemap_url_name': 'sitemaps'}),
+   url(r'^sitemap-(?P<section>.+)\.xml$', cache_page(sitemap_views.sitemap, 86400),
+       {'sitemaps': sitemaps}, name='sitemaps'),  
+
 Pinging Google
 ==============
 
