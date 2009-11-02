@@ -1,4 +1,5 @@
 from django.core import urlresolvers, paginator
+from django.contrib.sites.models import get_current
 import urllib
 
 PING_URL = "http://www.google.com/webmasters/tools/ping"
@@ -60,8 +61,7 @@ class Sitemap(object):
     paginator = property(_get_paginator)
 
     def get_urls(self, page=1):
-        from django.contrib.sites.models import Site
-        current_site = Site.objects.get_current()
+        current_site = get_current(self.request)
         urls = []
         for item in self.paginator.page(page).object_list:
             loc = "http://%s%s" % (current_site.domain, self.__get('location', item))
