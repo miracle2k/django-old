@@ -31,8 +31,8 @@ class Pinger(object):
     sitemap_url = None
     
     def __init__(self, sitemap_url=None, ping_url=None, domain=None):
-        self.base = base
-        self.sitemap_url = "http://%s%s" % (base or get_current().domain, sitemap_url or get_sitemap_url())
+        self.domain = domain
+        self.sitemap_url = "http://%s%s" % (domain or get_current().domain, sitemap_url or get_sitemap_url())
         if ping_url:
             self.ping_url = ping_url
         self.logger = logging.getLogger("django.contrib.sitemaps.%s" % str(self.__class__.__name__))
@@ -69,7 +69,7 @@ class YahooPinger(Pinger):
         super(YahooPinger, self).ping()
         
         try:
-            base_url = "http://%s/" % (self.base or get_current().domain)
+            base_url = "http://%s/" % (self.domain or get_current().domain)
             if settings.DEBUG:
                 self.logger.debug("Pinging %s with base site URL %s..." % (self.name, base_url))
             params = urllib.urlencode({'sitemap' : base_url})
