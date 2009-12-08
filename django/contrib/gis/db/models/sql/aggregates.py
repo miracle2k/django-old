@@ -11,17 +11,28 @@ geo_template = '%(function)s(%(field)s)'
 def convert_extent(box):
     raise NotImplementedError('Aggregate extent not implemented for this spatial backend.')
 
+def convert_extent3d(box):
+    raise NotImplementedError('Aggregate 3D extent not implemented for this spatial backend.')
+
 def convert_geom(wkt, geo_field):
     raise NotImplementedError('Aggregate method not implemented for this spatial backend.')
 
 if SpatialBackend.postgis:
     def convert_extent(box):
-        # Box text will be something like "BOX(-90.0 30.0, -85.0 40.0)"; 
+        # Box text will be something like "BOX(-90.0 30.0, -85.0 40.0)";
         # parsing out and returning as a 4-tuple.
         ll, ur = box[4:-1].split(',')
         xmin, ymin = map(float, ll.split())
         xmax, ymax = map(float, ur.split())
         return (xmin, ymin, xmax, ymax)
+
+    def convert_extent3d(box3d):
+        # Box text will be something like "BOX3D(-90.0 30.0 1, -85.0 40.0 2)";
+        # parsing out and returning as a 4-tuple.
+        ll, ur = box3d[6:-1].split(',')
+        xmin, ymin, zmin = map(float, ll.split())
+        xmax, ymax, zmax = map(float, ur.split())
+        return (xmin, ymin, zmin, xmax, ymax, zmax)
 
     def convert_geom(hex, geo_field):
         if hex: return SpatialBackend.Geometry(hex)
@@ -32,19 +43,28 @@ elif SpatialBackend.oracle:
 
     def convert_extent(clob):
         if clob:
-            # Oracle returns a polygon for the extent, we construct
-            # the 4-tuple from the coordinates in the polygon.
-            poly = SpatialBackend.Geometry(clob.read())
-            shell = poly.shell
-            ll, ur = shell[0], shell[2]
+            # Generally, Oracle returns a polygon for the extent -- however,
+            # it can return a single point if there's only one Point in the
+            # table.
+            ext_geom = SpatialBackend.Geometry(clob.read())
+            gtype = str(ext_geom.geom_type)
+            if gtype == 'Polygon':
+                # Construct the 4-tuple from the coordinates in the polygon.
+                shell = ext_geom.shell
+                ll, ur = shell[0][:2], shell[2][:2]
+            elif gtype == 'Point':
+                ll = ext_geom.coords[:2]
+                ur = ll
+            else:
+                raise Exception('Unexpected geometry type returned for extent: %s' % gtype)
             xmin, ymin = ll
             xmax, ymax = ur
             return (xmin, ymin, xmax, ymax)
         else:
             return None
-    
+
     def convert_geom(clob, geo_field):
-        if clob: 
+        if clob:
             return SpatialBackend.Geometry(clob.read(), geo_field.srid)
         else:
             return None
@@ -73,7 +93,7 @@ class GeoAggregate(Aggregate):
             self.extra.setdefault('tolerance', 0.05)
 
         # Can't use geographic aggregates on non-geometry fields.
-        if not isinstance(self.source, GeometryField): 
+        if not isinstance(self.source, GeometryField):
             raise ValueError('Geospatial aggregates only allowed on geometry fields.')
 
         # Making sure the SQL function is available for this spatial backend.
@@ -85,13 +105,17 @@ class Collect(GeoAggregate):
     sql_function = SpatialBackend.collect
 
 class Extent(GeoAggregate):
-    is_extent = True
+    is_extent = '2D'
     sql_function = SpatialBackend.extent
-        
+
 if SpatialBackend.oracle:
     # Have to change Extent's attributes here for Oracle.
     Extent.conversion_class = GeomField
     Extent.sql_template = '%(function)s(%(field)s)'
+
+class Extent3D(GeoAggregate):
+    is_extent = '3D'
+    sql_function = SpatialBackend.extent3d
 
 class MakeLine(GeoAggregate):
     conversion_class = GeomField

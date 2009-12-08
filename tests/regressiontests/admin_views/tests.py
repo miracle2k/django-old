@@ -353,6 +353,9 @@ class AdminViewPermissionsTest(TestCase):
                      LOGIN_FORM_KEY: 1,
                      'username': 'joepublic',
                      'password': 'secret'}
+        self.no_username_login = {
+                     LOGIN_FORM_KEY: 1,
+                     'password': 'secret'}
 
     def testLogin(self):
         """
@@ -412,6 +415,14 @@ class AdminViewPermissionsTest(TestCase):
         request = self.client.get('/test_admin/admin/')
         self.failUnlessEqual(request.status_code, 200)
         login = self.client.post('/test_admin/admin/', self.joepublic_login)
+        self.failUnlessEqual(login.status_code, 200)
+        # Login.context is a list of context dicts we just need to check the first one.
+        self.assert_(login.context[0].get('error_message'))
+
+        # Requests without username should not return 500 errors.
+        request = self.client.get('/test_admin/admin/')
+        self.failUnlessEqual(request.status_code, 200)
+        login = self.client.post('/test_admin/admin/', self.no_username_login)
         self.failUnlessEqual(login.status_code, 200)
         # Login.context is a list of context dicts we just need to check the first one.
         self.assert_(login.context[0].get('error_message'))
@@ -874,8 +885,9 @@ class AdminViewListEditable(TestCase):
         # 4 action inputs (3 regular checkboxes, 1 checkbox to select all)
         # main form submit button = 1
         # search field and search submit button = 2
-        # 6 + 2 + 1 + 2 = 11 inputs
-        self.failUnlessEqual(response.content.count("<input"), 15)
+        # CSRF field = 1
+        # 6 + 2 + 4 + 1 + 2 + 1 = 16 inputs
+        self.failUnlessEqual(response.content.count("<input"), 16)
         # 1 select per object = 3 selects
         self.failUnlessEqual(response.content.count("<select"), 4)
 
@@ -897,7 +909,7 @@ class AdminViewListEditable(TestCase):
         self.client.post('/test_admin/admin/admin_views/person/', data)
 
         self.failUnlessEqual(Person.objects.get(name="John Mauchly").alive, False)
-        self.failUnlessEqual(Person.objects.get(name="Grace Hooper").gender, 2)
+        self.failUnlessEqual(Person.objects.get(name="Grace Hopper").gender, 2)
 
         # test a filtered page
         data = {
@@ -1129,6 +1141,16 @@ class AdminActionsTest(TestCase):
             '<input type="checkbox" class="action-select"' not in response.content,
             "Found an unexpected action toggle checkboxbox in response"
         )
+        self.assert_('action-checkbox-column' not in response.content,
+            "Found unexpected action-checkbox-column class in response")
+
+    def test_action_column_class(self):
+        "Tests that the checkbox column class is present in the response"
+        response = self.client.get('/test_admin/admin/admin_views/subscriber/')
+        self.assertNotEquals(response.context["action_form"], None)
+        self.assert_('action-checkbox-column' in response.content,
+            "Expected an action-checkbox-column in response")
+
 
     def test_multiple_actions_form(self):
         """
@@ -1605,4 +1627,3 @@ class NeverCacheTests(TestCase):
         "Check the never-cache status of the Javascript i18n view"
         response = self.client.get('/test_admin/jsi18n/')
         self.failUnlessEqual(get_max_age(response), None)
-
