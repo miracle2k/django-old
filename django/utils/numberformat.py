@@ -10,7 +10,7 @@ def format(number, decimal_sep, decimal_pos, grouping=0, thousand_sep=''):
      * thousand_sep: Thousand separator symbol (for example ",")
     """
     # sign
-    if number < 0:
+    if float(number) < 0:
         sign = '-'
     else:
         sign = ''
