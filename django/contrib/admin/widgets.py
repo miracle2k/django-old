@@ -2,11 +2,12 @@
 Form Widget classes specific to the Django admin site.
 """
 
-import copy
+import django.utils.copycompat as copy
 
 from django import forms
 from django.forms.widgets import RadioFieldRenderer
 from django.forms.util import flatatt
+from django.utils.html import escape
 from django.utils.text import truncate_words
 from django.utils.translation import ugettext as _
 from django.utils.safestring import mark_safe
@@ -101,8 +102,9 @@ class ForeignKeyRawIdWidget(forms.TextInput):
     A Widget for displaying ForeignKeys in the "raw_id" interface rather than
     in a <select> box.
     """
-    def __init__(self, rel, attrs=None):
+    def __init__(self, rel, attrs=None, using=None):
         self.rel = rel
+        self.db = using
         super(ForeignKeyRawIdWidget, self).__init__(attrs)
 
     def render(self, name, value, attrs=None):
@@ -147,16 +149,16 @@ class ForeignKeyRawIdWidget(forms.TextInput):
 
     def label_for_value(self, value):
         key = self.rel.get_related_field().name
-        obj = self.rel.to._default_manager.get(**{key: value})
-        return '&nbsp;<strong>%s</strong>' % truncate_words(obj, 14)
+        obj = self.rel.to._default_manager.using(self.db).get(**{key: value})
+        return '&nbsp;<strong>%s</strong>' % escape(truncate_words(obj, 14))
 
 class ManyToManyRawIdWidget(ForeignKeyRawIdWidget):
     """
     A Widget for displaying ManyToMany ids in the "raw_id" interface rather than
     in a <select multiple> box.
     """
-    def __init__(self, rel, attrs=None):
-        super(ManyToManyRawIdWidget, self).__init__(rel, attrs)
+    def __init__(self, rel, attrs=None, using=None):
+        super(ManyToManyRawIdWidget, self).__init__(rel, attrs, using=None)
 
     def render(self, name, value, attrs=None):
         attrs['class'] = 'vManyToManyRawIdAdminField'

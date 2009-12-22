@@ -6,6 +6,8 @@ from django.contrib.contenttypes.models import ContentType
 from django.contrib.admin import widgets
 from django.contrib.admin import helpers
 from django.contrib.admin.util import unquote, flatten_fieldsets, get_deleted_objects, model_ngettext, model_format_dict
+from django.contrib import messages
+from django.views.decorators.csrf import csrf_protect
 from django.core.exceptions import PermissionDenied
 from django.db import models, transaction
 from django.db.models.fields import BLANK_CHOICE_DASH
@@ -40,14 +42,15 @@ FORMFIELD_FOR_DBFIELD_DEFAULTS = {
         'form_class': forms.SplitDateTimeField,
         'widget': widgets.AdminSplitDateTime
     },
-    models.DateField:    {'widget': widgets.AdminDateWidget},
-    models.TimeField:    {'widget': widgets.AdminTimeWidget},
-    models.TextField:    {'widget': widgets.AdminTextareaWidget},
-    models.URLField:     {'widget': widgets.AdminURLFieldWidget},
-    models.IntegerField: {'widget': widgets.AdminIntegerFieldWidget},
-    models.CharField:    {'widget': widgets.AdminTextInputWidget},
-    models.ImageField:   {'widget': widgets.AdminFileWidget},
-    models.FileField:    {'widget': widgets.AdminFileWidget},
+    models.DateField:       {'widget': widgets.AdminDateWidget},
+    models.TimeField:       {'widget': widgets.AdminTimeWidget},
+    models.TextField:       {'widget': widgets.AdminTextareaWidget},
+    models.URLField:        {'widget': widgets.AdminURLFieldWidget},
+    models.IntegerField:    {'widget': widgets.AdminIntegerFieldWidget},
+    models.BigIntegerField: {'widget': widgets.AdminIntegerFieldWidget},
+    models.CharField:       {'widget': widgets.AdminTextInputWidget},
+    models.ImageField:      {'widget': widgets.AdminFileWidget},
+    models.FileField:       {'widget': widgets.AdminFileWidget},
 }
 
 
@@ -138,8 +141,9 @@ class BaseModelAdmin(object):
         """
         Get a form Field for a ForeignKey.
         """
+        db = kwargs.get('using')
         if db_field.name in self.raw_id_fields:
-            kwargs['widget'] = widgets.ForeignKeyRawIdWidget(db_field.rel)
+            kwargs['widget'] = widgets.ForeignKeyRawIdWidget(db_field.rel, using=db)
         elif db_field.name in self.radio_fields:
             kwargs['widget'] = widgets.AdminRadioSelect(attrs={
                 'class': get_ul_class(self.radio_fields[db_field.name]),
@@ -152,12 +156,14 @@ class BaseModelAdmin(object):
         """
         Get a form Field for a ManyToManyField.
         """
-        # If it uses an intermediary model, don't show field in admin.
-        if db_field.rel.through is not None:
+        # If it uses an intermediary model that isn't auto created, don't show
+        # a field in admin.
+        if not db_field.rel.through._meta.auto_created:
             return None
+        db = kwargs.get('using')
 
         if db_field.name in self.raw_id_fields:
-            kwargs['widget'] = widgets.ManyToManyRawIdWidget(db_field.rel)
+            kwargs['widget'] = widgets.ManyToManyRawIdWidget(db_field.rel, using=db)
             kwargs['help_text'] = ''
         elif db_field.name in (list(self.filter_vertical) + list(self.filter_horizontal)):
             kwargs['widget'] = widgets.FilteredSelectMultiple(db_field.verbose_name, (db_field.name in self.filter_vertical))
@@ -347,6 +353,13 @@ class ModelAdmin(BaseModelAdmin):
         defaults.update(kwargs)
         return modelform_factory(self.model, **defaults)
 
+    def get_changelist(self, request, **kwargs):
+        """
+        Returns the ChangeList class for use on the changelist page.
+        """
+        from django.contrib.admin.views.main import ChangeList
+        return ChangeList
+
     def get_changelist_form(self, request, **kwargs):
         """
         Returns a Form class for use in the Formset on the changelist page.
@@ -482,7 +495,7 @@ class ModelAdmin(BaseModelAdmin):
 
     def get_action(self, action):
         """
-        Return a given action from a parameter, which can either be a calable,
+        Return a given action from a parameter, which can either be a callable,
         or the name of a method on the ModelAdmin.  Return is a tuple of
         (callable, name, description).
         """
@@ -539,9 +552,9 @@ class ModelAdmin(BaseModelAdmin):
     def message_user(self, request, message):
         """
         Send a message to the user. The default implementation
-        posts a message using the auth Message object.
+        posts a message using the django.contrib.messages backend.
         """
-        request.user.message_set.create(message=message)
+        messages.info(request, message)
 
     def save_form(self, request, form, change):
         """
@@ -689,6 +702,9 @@ class ModelAdmin(BaseModelAdmin):
             # perform an action on it, so bail.
             selected = request.POST.getlist(helpers.ACTION_CHECKBOX_NAME)
             if not selected:
+                # Reminder that something needs to be selected or nothing will happen
+                msg = _("Items must be selected in order to perform actions on them. No items have been changed.")
+                self.message_user(request, msg)
                 return None
 
             response = func(self, request, queryset.filter(pk__in=selected))
@@ -700,7 +716,12 @@ class ModelAdmin(BaseModelAdmin):
                 return response
             else:
                 return HttpResponseRedirect(".")
+        else:
+            msg = _("No action selected.")
+            self.message_user(request, msg)
 
+    @csrf_protect
+    @transaction.commit_on_success
     def add_view(self, request, form_url='', extra_context=None):
         "The 'add' admin view for this model."
         model = self.model
@@ -720,7 +741,7 @@ class ModelAdmin(BaseModelAdmin):
                 form_validated = False
                 new_object = self.model()
             prefixes = {}
-            for FormSet in self.get_formsets(request):
+            for FormSet, inline in zip(self.get_formsets(request), self.inline_instances):
                 prefix = FormSet.get_default_prefix()
                 prefixes[prefix] = prefixes.get(prefix, 0) + 1
                 if prefixes[prefix] != 1:
@@ -728,7 +749,7 @@ class ModelAdmin(BaseModelAdmin):
                 formset = FormSet(data=request.POST, files=request.FILES,
                                   instance=new_object,
                                   save_as_new=request.POST.has_key("_saveasnew"),
-                                  prefix=prefix)
+                                  prefix=prefix, queryset=inline.queryset(request))
                 formsets.append(formset)
             if all_valid(formsets) and form_validated:
                 self.save_model(request, new_object, form, change=False)
@@ -751,12 +772,14 @@ class ModelAdmin(BaseModelAdmin):
                     initial[k] = initial[k].split(",")
             form = ModelForm(initial=initial)
             prefixes = {}
-            for FormSet in self.get_formsets(request):
+            for FormSet, inline in zip(self.get_formsets(request),
+                                       self.inline_instances):
                 prefix = FormSet.get_default_prefix()
                 prefixes[prefix] = prefixes.get(prefix, 0) + 1
                 if prefixes[prefix] != 1:
                     prefix = "%s-%s" % (prefix, prefixes[prefix])
-                formset = FormSet(instance=self.model(), prefix=prefix)
+                formset = FormSet(instance=self.model(), prefix=prefix,
+                                  queryset=inline.queryset(request))
                 formsets.append(formset)
 
         adminForm = helpers.AdminForm(form, list(self.get_fieldsets(request)), self.prepopulated_fields)
@@ -782,8 +805,9 @@ class ModelAdmin(BaseModelAdmin):
         }
         context.update(extra_context or {})
         return self.render_change_form(request, context, form_url=form_url, add=True)
-    add_view = transaction.commit_on_success(add_view)
 
+    @csrf_protect
+    @transaction.commit_on_success
     def change_view(self, request, object_id, extra_context=None):
         "The 'change' admin view for this model."
         model = self.model
@@ -817,13 +841,16 @@ class ModelAdmin(BaseModelAdmin):
                 form_validated = False
                 new_object = obj
             prefixes = {}
-            for FormSet in self.get_formsets(request, new_object):
+            for FormSet, inline in zip(self.get_formsets(request, new_object),
+                                       self.inline_instances):
                 prefix = FormSet.get_default_prefix()
                 prefixes[prefix] = prefixes.get(prefix, 0) + 1
                 if prefixes[prefix] != 1:
                     prefix = "%s-%s" % (prefix, prefixes[prefix])
                 formset = FormSet(request.POST, request.FILES,
-                                  instance=new_object, prefix=prefix)
+                                  instance=new_object, prefix=prefix,
+                                  queryset=inline.queryset(request))
+
                 formsets.append(formset)
 
             if all_valid(formsets) and form_validated:
@@ -839,12 +866,13 @@ class ModelAdmin(BaseModelAdmin):
         else:
             form = ModelForm(instance=obj)
             prefixes = {}
-            for FormSet in self.get_formsets(request, obj):
+            for FormSet, inline in zip(self.get_formsets(request, obj), self.inline_instances):
                 prefix = FormSet.get_default_prefix()
                 prefixes[prefix] = prefixes.get(prefix, 0) + 1
                 if prefixes[prefix] != 1:
                     prefix = "%s-%s" % (prefix, prefixes[prefix])
-                formset = FormSet(instance=obj, prefix=prefix)
+                formset = FormSet(instance=obj, prefix=prefix,
+                                  queryset=inline.queryset(request))
                 formsets.append(formset)
 
         adminForm = helpers.AdminForm(form, self.get_fieldsets(request, obj), self.prepopulated_fields)
@@ -871,11 +899,11 @@ class ModelAdmin(BaseModelAdmin):
         }
         context.update(extra_context or {})
         return self.render_change_form(request, context, change=True, obj=obj)
-    change_view = transaction.commit_on_success(change_view)
 
+    @csrf_protect
     def changelist_view(self, request, extra_context=None):
         "The 'change list' admin view for this model."
-        from django.contrib.admin.views.main import ChangeList, ERROR_FLAG
+        from django.contrib.admin.views.main import ERROR_FLAG
         opts = self.model._meta
         app_label = opts.app_label
         if not self.has_change_permission(request, None):
@@ -892,6 +920,7 @@ class ModelAdmin(BaseModelAdmin):
             except ValueError:
                 pass
 
+        ChangeList = self.get_changelist(request)
         try:
             cl = ChangeList(request, self.model, list_display, self.list_display_links, self.list_filter,
                 self.date_hierarchy, self.search_fields, self.list_select_related, self.list_per_page, self.list_editable, self)
@@ -985,6 +1014,7 @@ class ModelAdmin(BaseModelAdmin):
             'admin/change_list.html'
         ], context, context_instance=context_instance)
 
+    @csrf_protect
     def delete_view(self, request, object_id, extra_context=None):
         "The 'delete' admin view for this model."
         opts = self.model._meta
@@ -1052,7 +1082,7 @@ class ModelAdmin(BaseModelAdmin):
             content_type__id__exact = ContentType.objects.get_for_model(model).id
         ).select_related().order_by('action_time')
         # If no history was found, see whether this object even exists.
-        obj = get_object_or_404(model, pk=object_id)
+        obj = get_object_or_404(model, pk=unquote(object_id))
         context = {
             'title': _('Change history: %s') % force_unicode(obj),
             'action_list': action_list,
@@ -1164,6 +1194,9 @@ class InlineModelAdmin(BaseModelAdmin):
             return self.declared_fieldsets
         form = self.get_formset(request).form
         return [(None, {'fields': form.base_fields.keys()})]
+
+    def queryset(self, request):
+        return self.model._default_manager.all()
 
 class StackedInline(InlineModelAdmin):
     template = 'admin/edit_inline/stacked.html'

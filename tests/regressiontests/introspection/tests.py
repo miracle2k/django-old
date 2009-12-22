@@ -1,5 +1,5 @@
 from django.conf import settings
-from django.db import connection
+from django.db import connection, DEFAULT_DB_ALIAS
 from django.test import TestCase
 from django.utils import functional
 
@@ -76,17 +76,17 @@ class IntrospectionTests(TestCase):
     def test_get_table_description_types(self):
         cursor = connection.cursor()
         desc = connection.introspection.get_table_description(cursor, Reporter._meta.db_table)
-        self.assertEqual([datatype(r[1]) for r in desc],
-                          ['IntegerField', 'CharField', 'CharField', 'CharField'])
+        self.assertEqual([datatype(r[1], r) for r in desc],
+                          ['IntegerField', 'CharField', 'CharField', 'CharField', 'BigIntegerField'])
 
     # Regression test for #9991 - 'real' types in postgres
-    if settings.DATABASE_ENGINE.startswith('postgresql'):
+    if settings.DATABASES[DEFAULT_DB_ALIAS]['ENGINE'].startswith('django.db.backends.postgresql'):
         def test_postgresql_real_type(self):
             cursor = connection.cursor()
             cursor.execute("CREATE TABLE django_ixn_real_test_table (number REAL);")
             desc = connection.introspection.get_table_description(cursor, 'django_ixn_real_test_table')
             cursor.execute('DROP TABLE django_ixn_real_test_table;')
-            self.assertEqual(datatype(desc[0][1]), 'FloatField')
+            self.assertEqual(datatype(desc[0][1], desc[0]), 'FloatField')
 
     def test_get_relations(self):
         cursor = connection.cursor()
@@ -104,9 +104,10 @@ class IntrospectionTests(TestCase):
         indexes = connection.introspection.get_indexes(cursor, Article._meta.db_table)
         self.assertEqual(indexes['reporter_id'], {'unique': False, 'primary_key': False})
 
-def datatype(dbtype):
+
+def datatype(dbtype, description):
     """Helper to convert a data type into a string."""
-    dt = connection.introspection.data_types_reverse[dbtype]
+    dt = connection.introspection.get_field_type(dbtype, description)
     if type(dt) is tuple:
         return dt[0]
     else:

@@ -1,0 +1,442 @@
+.. _releases-1.2:
+
+============================================
+Django 1.2 release notes — UNDER DEVELOPMENT
+============================================
+
+This page documents release notes for the as-yet-unreleased Django 1.2.  As such
+it is tentative and subject to change.  It provides up-to-date information for
+those who are following trunk.
+
+Django 1.2 includes a number of nifty `new features`_, lots of bug
+fixes, and an easy upgrade path from Django 1.1.
+
+.. _new features: `What's new in Django 1.2`_
+
+.. _backwards-incompatible-changes-1.2:
+
+Backwards-incompatible changes in 1.2
+=====================================
+
+CSRF Protection
+---------------
+
+There have been large changes to the way that CSRF protection works, detailed in
+:ref:`the CSRF documentaton <ref-contrib-csrf>`.  The following are the major
+changes that developers must be aware of:
+
+ * ``CsrfResponseMiddleware`` and ``CsrfMiddleware`` have been deprecated, and
+   will be removed completely in Django 1.4, in favor of a template tag that
+   should be inserted into forms.
+
+ * All contrib apps use a ``csrf_protect`` decorator to protect the view.  This
+   requires the use of the csrf_token template tag in the template, so if you
+   have used custom templates for contrib views, you MUST READ THE :ref:`UPGRADE
+   INSTRUCTIONS <ref-csrf-upgrading-notes>` to fix those templates.
+
+ * ``CsrfViewMiddleware`` is included in :setting:`MIDDLEWARE_CLASSES` by
+   default. This turns on CSRF protection by default, so that views that accept
+   POST requests need to be written to work with the middleware.  Instructions
+   on how to do this are found in the CSRF docs.
+
+ * All of the CSRF has moved from contrib to core (with backwards compatible
+   imports in the old locations, which are deprecated).
+
+:ttag:`if` tag changes
+----------------------
+
+Due to new features in the :ttag:`if` template tag, it no longer accepts 'and',
+'or' and 'not' as valid **variable** names.  Previously that worked in some
+cases even though these strings were normally treated as keywords.  Now, the
+keyword status is always enforced, and template code like ``{% if not %}`` or
+``{% if and %}`` will throw a TemplateSyntaxError.
+
+``LazyObject``
+--------------
+
+``LazyObject`` is an undocumented utility class used for lazily wrapping other
+objects of unknown type.  In Django 1.1 and earlier, it handled introspection in
+a non-standard way, depending on wrapped objects implementing a public method
+``get_all_members()``. Since this could easily lead to name clashes, it has been
+changed to use the standard method, involving ``__members__`` and ``__dir__()``.
+If you used ``LazyObject`` in your own code, and implemented the
+``get_all_members()`` method for wrapped objects, you need to make the following
+changes:
+
+ * If your class does not have special requirements for introspection (i.e. you
+   have not implemented ``__getattr__()`` or other methods that allow for
+   attributes not discoverable by normal mechanisms), you can simply remove the
+   ``get_all_members()`` method.  The default implementation on ``LazyObject``
+   will do the right thing.
+
+ * If you have more complex requirements for introspection, first rename the
+   ``get_all_members()`` method to ``__dir__()``.  This is the standard method,
+   from Python 2.6 onwards, for supporting introspection.  If you are require
+   support for Python < 2.6, add the following code to the class::
+
+       __members__ = property(lambda self: self.__dir__())
+
+Specifying databases
+--------------------
+
+Prior to Django 1.1, Django used a number of settings to control access to a
+single database. Django 1.2 introduces support for multiple databases, and as
+a result, the way you define database settings has changed.
+
+Any existing Django settings file will continue to work as expected until
+Django 1.4. Old-style database settings will be automatically translated to
+the new-style format.
+
+In the old-style (pre 1.2) format, there were a number of
+``DATABASE_`` settings at the top level of your settings file. For
+example::
+
+    DATABASE_NAME = 'test_db'
+    DATABASE_BACKEND = 'postgresl_psycopg2'
+    DATABASE_USER = 'myusername'
+    DATABASE_PASSWORD = 's3krit'
+
+These settings are now contained inside a dictionary named
+:setting:`DATABASES`. Each item in the dictionary corresponds to a
+single database connection, with the name ``'default'`` describing the
+default database connection. The setting names have also been
+shortened to reflect the fact that they are stored in a dictionary.
+The sample settings given previously would now be stored using::
+
+    DATABASES = {
+        'default': {
+            'NAME': 'test_db',
+            'BACKEND': 'django.db.backends.postgresl_psycopg2',
+            'USER': 'myusername',
+            'PASSWORD': 's3krit',
+        }
+    }
+
+This affects the following settings:
+
+    =========================================  ==========================
+     Old setting                                New Setting
+    =========================================  ==========================
+    :setting:`DATABASE_ENGINE`                 :setting:`ENGINE`
+    :setting:`DATABASE_HOST`                   :setting:`HOST`
+    :setting:`DATABASE_NAME`                   :setting:`NAME`
+    :setting:`DATABASE_OPTIONS`                :setting:`OPTIONS`
+    :setting:`DATABASE_PASSWORD`               :setting:`PASSWORD`
+    :setting:`DATABASE_PORT`                   :setting:`PORT`
+    :setting:`DATABASE_USER`                   :setting:`USER`
+    :setting:`TEST_DATABASE_CHARSET`           :setting:`TEST_CHARSET`
+    :setting:`TEST_DATABASE_COLLATION`         :setting:`TEST_COLLATION`
+    :setting:`TEST_DATABASE_NAME`              :setting:`TEST_NAME`
+    =========================================  ==========================
+
+These changes are also required if you have manually created a database
+connection using ``DatabaseWrapper()`` from your database backend of choice.
+
+In addition to the change in structure, Django 1.2 removes the special
+handling for the built-in database backends. All database backends
+must now be specified by a fully qualified module name (i.e.,
+``django.db.backends.postgresl_psycopg2``, rather than just
+``postgresql_psycopg2``).
+
+``__dict__`` on Model instances
+-------------------------------
+
+Historically, the ``__dict__`` attribute of a model instance has only contained
+attributes corresponding to the fields on a model.
+
+In order to support multiple database configurations, Django 1.2 has
+added a ``_state`` attribute to object instances. This attribute will
+appear in ``__dict__`` for a model instance. If your code relies on
+iterating over __dict__ to obtain a list of fields, you must now
+filter out ``_state`` attribute of out ``__dict__``.
+
+``get_db_prep_*()`` methods on Field
+------------------------------------
+
+Prior to v1.2, a custom field had the option of defining several
+functions to support conversion of Python values into
+database-compatible values. A custom field might look something like::
+
+    class CustomModelField(models.Field):
+        # ...
+
+        def get_db_prep_save(self, value):
+            # ...
+
+        def get_db_prep_value(self, value):
+            # ...
+
+        def get_db_prep_lookup(self, lookup_type, value):
+            # ...
+
+In 1.2, these three methods have undergone a change in prototype, and
+two extra methods have been introduced::
+
+    class CustomModelField(models.Field):
+        # ...
+
+        def get_prep_value(self, value):
+            # ...
+
+        def get_prep_lookup(self, lookup_type, value):
+            # ...
+
+        def get_db_prep_save(self, value, connection):
+            # ...
+
+        def get_db_prep_value(self, value, connection, prepared=False):
+            # ...
+
+        def get_db_prep_lookup(self, lookup_type, value, connection, prepared=False):
+            # ...
+
+These changes are required to support multiple databases -
+``get_db_prep_*`` can no longer make any assumptions regarding the
+database for which it is preparing. The ``connection`` argument now
+provides the preparation methods with the specific connection for
+which the value is being prepared.
+
+The two new methods exist to differentiate general data preparation
+requirements, and requirements that are database-specific. The
+``prepared`` argument is used to indicate to the database preparation
+methods whether generic value preparation has been performed. If
+an unprepared (i.e., ``prepared=False``) value is provided to the
+``get_db_prep_*()`` calls, they should invoke the corresponding
+``get_prep_*()`` calls to perform generic data preparation.
+
+Conversion functions has been provided which will transparently
+convert functions adhering to the old prototype into functions
+compatible with the new prototype. However, this conversion function
+will be removed in Django 1.4, so you should upgrade your Field
+definitions to use the new prototype.
+
+If your ``get_db_prep_*()`` methods made no use of the database
+connection, you should be able to upgrade by renaming
+``get_db_prep_value()`` to ``get_prep_value()`` and
+``get_db_prep_lookup()`` to ``get_prep_lookup()`. If you require
+database specific conversions, then you will need to provide an
+implementation ``get_db_prep_*`` that uses the ``connection``
+argument to resolve database-specific values.
+
+Stateful template tags
+----------------------
+
+Template tags that store rendering state on the node itself may experience
+problems if they are used with the new :ref:`cached
+template loader<template-loaders>`.
+
+All of the built-in Django template tags are safe to use with the cached
+loader, but if you're using custom template tags that come from third
+party packages, or that you wrote yourself, you should ensure that the
+``Node`` implementation for each tag is thread-safe. For more
+information, see
+:ref:`template tag thread safety considerations<template_tag_thread_safety>`.
+
+.. _deprecated-features-1.2:
+
+Features deprecated in 1.2
+==========================
+
+CSRF response rewriting middleware
+----------------------------------
+
+``CsrfResponseMiddleware``, the middleware that automatically inserted CSRF
+tokens into POST forms in outgoing pages, has been deprecated in favor of a
+template tag method (see above), and will be removed completely in Django
+1.4. ``CsrfMiddleware``, which includes the functionality of
+``CsrfResponseMiddleware`` and ``CsrfViewMiddleware`` has likewise been
+deprecated.
+
+Also, the CSRF module has moved from contrib to core, and the old imports are
+deprecated, as described in the :ref:`upgrading notes <ref-csrf-upgrading-notes>`.
+
+``SMTPConnection``
+------------------
+
+The ``SMTPConnection`` class has been deprecated in favor of a generic
+E-mail backend API. Old code that explicitly instantiated an instance
+of an SMTPConnection::
+
+    from django.core.mail import SMTPConnection
+    connection = SMTPConnection()
+    messages = get_notification_email()
+    connection.send_messages(messages)
+
+should now call :meth:`~django.core.mail.get_connection()` to
+instantiate a generic e-mail connection::
+
+    from django.core.mail import get_connection
+    connection = get_connection()
+    messages = get_notification_email()
+    connection.send_messages(messages)
+
+Depending on the value of the :setting:`EMAIL_BACKEND` setting, this
+may not return an SMTP connection. If you explicitly require an SMTP
+connection with which to send e-mail, you can explicitly request an
+SMTP connection::
+
+    from django.core.mail import get_connection
+    connection = get_connection('django.core.mail.backends.smtp')
+    messages = get_notification_email()
+    connection.send_messages(messages)
+
+If your call to construct an instance of ``SMTPConnection`` required
+additional arguments, those arguments can be passed to the
+:meth:`~django.core.mail.get_connection()` call::
+
+    connection = get_connection('django.core.mail.backends.smtp', hostname='localhost', port=1234)
+
+User Messages API
+-----------------
+
+The API for storing messages in the user ``Message`` model (via
+``user.message_set.create``) is now deprecated and will be removed in Django
+1.4 according to the standard :ref:`release process <internals-release-process>`.
+
+To upgrade your code, you need to replace any instances of::
+
+    user.message_set.create('a message')
+
+with the following::
+
+    from django.contrib import messages
+    messages.add_message(request, messages.INFO, 'a message')
+
+Additionally, if you make use of the method, you need to replace the
+following::
+
+    for message in user.get_and_delete_messages():
+        ...
+
+with::
+
+    from django.contrib import messages
+    for message in messages.get_messages(request):
+        ...
+
+For more information, see the full
+:ref:`messages documentation <ref-contrib-messages>`. You should begin to
+update your code to use the new API immediately.
+
+What's new in Django 1.2
+========================
+
+CSRF support
+------------
+
+Django now has much improved protection against :ref:`Cross-Site
+Request Forgery (CSRF) attacks<ref-contrib-csrf>`. This type of attack
+occurs when a malicious Web site contains a link, a form button or
+some javascript that is intended to perform some action on your Web
+site, using the credentials of a logged-in user who visits the
+malicious site in their browser. A related type of attack, 'login
+CSRF', where an attacking site tricks a user's browser into logging
+into a site with someone else's credentials, is also covered.
+
+E-mail Backends
+---------------
+
+You can now :ref:`configure the way that Django sends e-mail
+<topic-email-backends>`. Instead of using SMTP to send all e-mail, you
+can now choose a configurable e-mail backend to send messages. If your
+hosting provider uses a sandbox or some other non-SMTP technique for
+sending mail, you can now construct an e-mail backend that will allow
+Django's standard :ref:`mail sending methods<topics-email>` to use
+those facilities.
+
+This also makes it easier to debug mail sending - Django ships with
+backend implementations that allow you to send e-mail to a
+:ref:`file<topic-email-file-backend>`, to the
+:ref:`console<topic-email-console-backend>`, or to
+:ref:`memory<topic-email-memory-backend>` - you can even configure all
+e-mail to be :ref:`thrown away<topic-email-dummy-backend>`.
+
+Messages Framework
+------------------
+
+Django now includes a robust and configurable :ref:`messages framework
+<ref-contrib-messages>` with built-in support for cookie- and session-based
+messaging, for both anonymous and authenticated clients. The messages framework
+replaces the deprecated user message API and allows you to temporarily store
+messages in one request and retrieve them for display in a subsequent request
+(usually the next one).
+
+Support for multiple databases
+------------------------------
+
+Django 1.2 adds the ability to use :ref:`more than one database
+<topics-db-multi-db>` in your Django project. Queries can be
+issued at a specific database with the `using()` method on
+querysets; individual objects can be saved to a specific database
+by providing a ``using`` argument when you save the instance.
+
+'Smart' if tag
+--------------
+
+The :ttag:`if` tag has been upgraded to be much more powerful.  First, support
+for comparison operators has been added. No longer will you have to type:
+
+.. code-block:: html+django
+
+    {% ifnotequal a b %}
+     ...
+    {% endifnotequal %}
+
+...as you can now do:
+
+.. code-block:: html+django
+
+    {% if a != b %}
+     ...
+    {% endif %}
+
+The operators supported are ``==``, ``!=``, ``<``, ``>``, ``<=``, ``>=`` and
+``in``, all of which work like the Python operators, in addition to ``and``,
+``or`` and ``not`` which were already supported.
+
+Also, filters may now be used in the ``if`` expression. For example:
+
+.. code-block:: html+django
+
+      <div
+        {% if user.email|lower == message.recipient|lower %}
+          class="highlight"
+        {% endif %}
+      >{{ message }}</div>
+
+Template caching
+----------------
+
+In previous versions of Django, every time you rendered a template it
+would be reloaded from disk. In Django 1.2, you can use a :ref:`cached
+template loader <template-loaders>` to load templates once, then use a
+cached the result for every subsequent render. This can lead to a
+significant performance improvement if your templates are broken into
+lots of smaller subtemplates (using the ``{% extends %}`` or ``{%
+include %}`` tags).
+
+As a side effect, it is now much easier to support non-Django template
+languages. For more details, see the :ref:`notes on supporting
+non-Django template languages<topic-template-alternate-language>`.
+
+Natural keys in fixtures
+------------------------
+
+Fixtures can refer to remote objects using
+:ref:`topics-serialization-natural-keys`. This lookup scheme is an
+alternative to the normal primary-key based object references in a
+fixture, improving readability, and resolving problems referring to
+objects whose primary key value may not be predictable or known.
+
+`BigIntegerField`
+-----------------
+
+Models can now use a 64 bit :class:`~django.db.models.BigIntegerField` type.
+
+Fast Failure for Tests
+----------------------
+
+The `test` subcommand of `django-admin.py`, and the `runtests.py` script
+used to run Django's own test suite, support a new `--failfast` option. 
+When specified, this option causes the test runner to exit after 
+encountering a failure instead of continuing with the test run.

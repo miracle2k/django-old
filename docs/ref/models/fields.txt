@@ -299,6 +299,18 @@ according to available IDs. You usually won't need to use this directly; a
 primary key field will automatically be added to your model if you don't specify
 otherwise. See :ref:`automatic-primary-key-fields`.
 
+``BigIntegerField``
+-------------------
+
+.. versionadded:: 1.2
+
+.. class:: BigIntegerField([**options])
+
+A 64 bit integer, much like an :class:`IntegerField` except that it is
+guaranteed to fit numbers from -9223372036854775808 to 9223372036854775807. The
+admin represents this as an ``<input type="text">`` (a single-line input).
+ 
+
 ``BooleanField``
 ----------------
 
@@ -844,7 +856,7 @@ define the details of how the relation works.
     current date/time to be chosen.
 
     Instead of a dictionary this can also be a :class:`~django.db.models.Q`
-    object (an object with a :meth:`get_sql` method) for more complex queries.
+    object for more :ref:`complex queries <complex-lookups-with-q>`.
 
     ``limit_choices_to`` has no effect on the inline FormSets that are created
     to display related objects in the admin.

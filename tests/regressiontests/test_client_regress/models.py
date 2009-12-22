@@ -10,6 +10,7 @@ from django.test.utils import ContextList
 from django.core.urlresolvers import reverse
 from django.core.exceptions import SuspiciousOperation
 from django.template import TemplateDoesNotExist, TemplateSyntaxError, Context
+from django.template import loader
 
 class AssertContainsTests(TestCase):
     def setUp(self):
@@ -436,6 +437,11 @@ class ExceptionTests(TestCase):
 
 class TemplateExceptionTests(TestCase):
     def setUp(self):
+        # Reset the loaders so they don't try to render cached templates.
+        if loader.template_source_loaders is not None:
+            for template_loader in loader.template_source_loaders:
+                if hasattr(template_loader, 'reset'):
+                    template_loader.reset()
         self.old_templates = settings.TEMPLATE_DIRS
         settings.TEMPLATE_DIRS = ()
 
@@ -573,6 +579,23 @@ class RequestMethodTests(TestCase):
         response = self.client.delete('/test_client_regress/request_methods/')
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.content, 'request method: DELETE')
+
+class RequestMethodStringDataTests(TestCase):
+    def test_post(self):
+        "Request a view with string data via request method POST"
+        # Regression test for #11371
+        data = u'{"test": "json"}'
+        response = self.client.post('/test_client_regress/request_methods/', data=data, content_type='application/json')
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.content, 'request method: POST')
+
+    def test_put(self):
+        "Request a view with string data via request method PUT"
+        # Regression test for #11371
+        data = u'{"test": "json"}'
+        response = self.client.put('/test_client_regress/request_methods/', data=data, content_type='application/json')
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.content, 'request method: PUT')
 
 class QueryStringTests(TestCase):
     def test_get_like_requests(self):

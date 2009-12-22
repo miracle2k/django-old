@@ -353,6 +353,9 @@ class AdminViewPermissionsTest(TestCase):
                      LOGIN_FORM_KEY: 1,
                      'username': 'joepublic',
                      'password': 'secret'}
+        self.no_username_login = {
+                     LOGIN_FORM_KEY: 1,
+                     'password': 'secret'}
 
     def testLogin(self):
         """
@@ -412,6 +415,14 @@ class AdminViewPermissionsTest(TestCase):
         request = self.client.get('/test_admin/admin/')
         self.failUnlessEqual(request.status_code, 200)
         login = self.client.post('/test_admin/admin/', self.joepublic_login)
+        self.failUnlessEqual(login.status_code, 200)
+        # Login.context is a list of context dicts we just need to check the first one.
+        self.assert_(login.context[0].get('error_message'))
+
+        # Requests without username should not return 500 errors.
+        request = self.client.get('/test_admin/admin/')
+        self.failUnlessEqual(request.status_code, 200)
+        login = self.client.post('/test_admin/admin/', self.no_username_login)
         self.failUnlessEqual(login.status_code, 200)
         # Login.context is a list of context dicts we just need to check the first one.
         self.assert_(login.context[0].get('error_message'))
@@ -599,6 +610,12 @@ class AdminViewStringPrimaryKeyTest(TestCase):
     def tearDown(self):
         self.client.logout()
 
+    def test_get_history_view(self):
+        "Retrieving the history for the object using urlencoded form of primary key should work"
+        response = self.client.get('/test_admin/admin/admin_views/modelwithstringprimarykey/%s/history/' % quote(self.pk))
+        self.assertContains(response, escape(self.pk))
+        self.failUnlessEqual(response.status_code, 200)
+ 
     def test_get_change_view(self):
         "Retrieving the object using urlencoded form of primary key should work"
         response = self.client.get('/test_admin/admin/admin_views/modelwithstringprimarykey/%s/' % quote(self.pk))
@@ -874,8 +891,9 @@ class AdminViewListEditable(TestCase):
         # 4 action inputs (3 regular checkboxes, 1 checkbox to select all)
         # main form submit button = 1
         # search field and search submit button = 2
-        # 6 + 2 + 1 + 2 = 11 inputs
-        self.failUnlessEqual(response.content.count("<input"), 15)
+        # CSRF field = 1
+        # 6 + 2 + 4 + 1 + 2 + 1 = 16 inputs
+        self.failUnlessEqual(response.content.count("<input"), 16)
         # 1 select per object = 3 selects
         self.failUnlessEqual(response.content.count("<select"), 4)
 
@@ -897,7 +915,7 @@ class AdminViewListEditable(TestCase):
         self.client.post('/test_admin/admin/admin_views/person/', data)
 
         self.failUnlessEqual(Person.objects.get(name="John Mauchly").alive, False)
-        self.failUnlessEqual(Person.objects.get(name="Grace Hooper").gender, 2)
+        self.failUnlessEqual(Person.objects.get(name="Grace Hopper").gender, 2)
 
         # test a filtered page
         data = {
@@ -1129,6 +1147,15 @@ class AdminActionsTest(TestCase):
             '<input type="checkbox" class="action-select"' not in response.content,
             "Found an unexpected action toggle checkboxbox in response"
         )
+        self.assert_('action-checkbox-column' not in response.content,
+            "Found unexpected action-checkbox-column class in response")
+
+    def test_action_column_class(self):
+        "Tests that the checkbox column class is present in the response"
+        response = self.client.get('/test_admin/admin/admin_views/subscriber/')
+        self.assertNotEquals(response.context["action_form"], None)
+        self.assert_('action-checkbox-column' in response.content,
+            "Expected an action-checkbox-column in response")
 
     def test_multiple_actions_form(self):
         """
@@ -1146,6 +1173,62 @@ class AdminActionsTest(TestCase):
         # Send mail, don't delete.
         self.assertEquals(len(mail.outbox), 1)
         self.assertEquals(mail.outbox[0].subject, 'Greetings from a function action')
+
+    def test_user_message_on_none_selected(self):
+        """
+        User should see a warning when 'Go' is pressed and no items are selected.
+        """
+        action_data = {
+            ACTION_CHECKBOX_NAME: [],
+            'action' : 'delete_selected',
+            'index': 0,
+        }
+        response = self.client.post('/test_admin/admin/admin_views/subscriber/', action_data)
+        msg = """Items must be selected in order to perform actions on them. No items have been changed."""
+        self.assertContains(response, msg)
+        self.failUnlessEqual(Subscriber.objects.count(), 2)
+
+    def test_user_message_on_no_action(self):
+        """
+        User should see a warning when 'Go' is pressed and no action is selected.
+        """
+        action_data = {
+            ACTION_CHECKBOX_NAME: [1, 2],
+            'action' : '',
+            'index': 0,
+        }
+        response = self.client.post('/test_admin/admin/admin_views/subscriber/', action_data)
+        msg = """No action selected."""
+        self.assertContains(response, msg)
+        self.failUnlessEqual(Subscriber.objects.count(), 2)
+
+
+class TestCustomChangeList(TestCase):
+    fixtures = ['admin-views-users.xml']
+    urlbit = 'admin'
+
+    def setUp(self):
+        result = self.client.login(username='super', password='secret')
+        self.failUnlessEqual(result, True)
+
+    def tearDown(self):
+        self.client.logout()
+
+    def test_custom_changelist(self):
+        """
+        Validate that a custom ChangeList class can be used (#9749)
+        """
+        # Insert some data
+        post_data = {"name": u"First Gadget"}
+        response = self.client.post('/test_admin/%s/admin_views/gadget/add/' % self.urlbit, post_data)
+        self.failUnlessEqual(response.status_code, 302) # redirect somewhere
+        # Hit the page once to get messages out of the queue message list
+        response = self.client.get('/test_admin/%s/admin_views/gadget/' % self.urlbit)
+        # Ensure that that data is still not visible on the page
+        response = self.client.get('/test_admin/%s/admin_views/gadget/' % self.urlbit)
+        self.failUnlessEqual(response.status_code, 200)
+        self.assertNotContains(response, 'First Gadget')
+
 
 class TestInlineNotEditable(TestCase):
     fixtures = ['admin-views-users.xml']
@@ -1605,4 +1688,3 @@ class NeverCacheTests(TestCase):
         "Check the never-cache status of the Javascript i18n view"
         response = self.client.get('/test_admin/jsi18n/')
         self.failUnlessEqual(get_max_age(response), None)
-
