@@ -53,7 +53,7 @@ class RawQuery(object):
         # Always execute a new query for a new iterator.
         # This could be optomized with a cache at the expense of RAM.
         self._execute_query()
-        return self.cursor
+        return iter(self.cursor)
 
     def __repr__(self):
         return "<RawQuery: %r>" % (self.sql % self.params)
