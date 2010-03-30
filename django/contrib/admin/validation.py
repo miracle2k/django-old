@@ -191,6 +191,23 @@ def validate_inline(cls, parent, parent_model):
             raise ImproperlyConfigured("%s cannot exclude the field "
                     "'%s' - this is the foreign key to the parent model "
                     "%s." % (cls.__name__, fk.name, parent_model.__name__))
+    
+    # nested inlines
+    # inlines = []
+    if hasattr(cls, 'inlines'):
+        check_isseq(cls, 'inlines', cls.inlines)
+        for idx, inline in enumerate(cls.inlines):
+            if not issubclass(inline, BaseModelAdmin):
+                raise ImproperlyConfigured("'%s.inlines[%d]' does not inherit"
+                    " from BaseModelAdmin." % (cls.__name__, idx))
+            if not inline.model:
+                raise ImproperlyConfigured("'model' is a required attribute "
+                    "of '%s.inlines[%d]'." % (cls.__name__, idx))
+            if not issubclass(inline.model, models.Model):
+                raise ImproperlyConfigured("'%s.inlines[%s].model' does not "
+                    "inherit from models.Model." % (cls.__name__, idx))
+            validate_base(inline, inline.model)
+            validate_inline(inline, cls, cls.model)
 
 def validate_base(cls, model):
     opts = model._meta

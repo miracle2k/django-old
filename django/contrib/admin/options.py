@@ -887,6 +887,17 @@ class ModelAdmin(BaseModelAdmin):
                                   queryset=inline.queryset(request))
 
                 formsets.append(formset)
+                for inline in self.inline_instances:
+                    # If this is the inline that matches this formset, and
+                    # we have some nested inlines to deal with, then we need
+                    # to get the relevant formset for each of the forms in
+                    # the current formset.
+                    if inline.inlines and inline.model == formset.model:
+                        for nested in inline.inline_instances:
+                            for the_form in formset.forms:
+                                InlineFormSet = nested.get_formset(request, the_form.instance)
+                                prefix = "%s-%s" % (the_form.prefix, InlineFormSet.get_default_prefix())
+                                formsets.append(InlineFormSet(request.POST, request.FILES, instance=the_form.instance, prefix=prefix))
 
             if all_valid(formsets) and form_validated:
                 self.save_model(request, new_object, form, change=True)
@@ -921,6 +932,14 @@ class ModelAdmin(BaseModelAdmin):
             readonly = list(inline.get_readonly_fields(request, obj))
             inline_admin_formset = helpers.InlineAdminFormSet(inline, formset,
                 fieldsets, readonly, model_admin=self)
+            if inline.inlines:
+                for form in formset.forms:
+                    if form.instance.pk:
+                        instance = form.instance
+                    else:
+                        instance = None
+                    form.inlines = inline.get_inlines(request, instance, prefix=form.prefix)
+                inline_admin_formset.inlines = inline.get_inlines(request)
             inline_admin_formsets.append(inline_admin_formset)
             media = media + inline_admin_formset.media
 
@@ -1184,6 +1203,7 @@ class InlineModelAdmin(BaseModelAdmin):
     verbose_name = None
     verbose_name_plural = None
     can_delete = True
+    inlines = []
 
     def __init__(self, parent_model, admin_site):
         self.admin_site = admin_site
@@ -1194,6 +1214,10 @@ class InlineModelAdmin(BaseModelAdmin):
             self.verbose_name = self.model._meta.verbose_name
         if self.verbose_name_plural is None:
             self.verbose_name_plural = self.model._meta.verbose_name_plural
+        self.inline_instances = []
+        for inline_class in self.inlines:
+            inline_instance = inline_class(self.model, self.admin_site)
+            self.inline_instances.append(inline_instance)
 
     def _media(self):
         from django.conf import settings
@@ -1243,6 +1267,17 @@ class InlineModelAdmin(BaseModelAdmin):
 
     def queryset(self, request):
         return self.model._default_manager.all()
+
+    def get_inlines(self, request, obj=None, prefix=None):
+        nested_inlines = []
+        for inline in self.inline_instances:
+            FormSet = inline.get_formset(request, obj)
+            prefix = "%s-%s" % (prefix, FormSet.get_default_prefix())
+            formset = FormSet(instance=obj, prefix=prefix)
+            fieldsets = list(inline.get_fieldsets(request, obj))
+            nested_inline = helpers.InlineAdminFormSet(inline, formset, fieldsets)
+            nested_inlines.append(nested_inline)
+        return nested_inlines
 
 class StackedInline(InlineModelAdmin):
     template = 'admin/edit_inline/stacked.html'
