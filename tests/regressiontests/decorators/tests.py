@@ -1,11 +1,16 @@
 from unittest import TestCase
 from sys import version_info
+try:
+    from functools import wraps
+except ImportError:
+    from django.utils.functional import wraps  # Python 2.4 fallback.
 
-from django.http import HttpResponse
+from django.http import HttpResponse, HttpRequest
 from django.utils.functional import allow_lazy, lazy, memoize
 from django.views.decorators.http import require_http_methods, require_GET, require_POST
 from django.views.decorators.vary import vary_on_headers, vary_on_cookie
 from django.views.decorators.cache import cache_page, never_cache, cache_control
+from django.utils.decorators import method_decorator
 from django.contrib.auth.decorators import login_required, permission_required, user_passes_test
 from django.contrib.admin.views.decorators import staff_member_required
 
@@ -41,6 +46,7 @@ fully_decorated = staff_member_required(fully_decorated)
 fully_decorated = memoize(fully_decorated, {}, 1)
 fully_decorated = allow_lazy(fully_decorated)
 fully_decorated = lazy(fully_decorated)
+
 
 class DecoratorsTest(TestCase):
 
@@ -84,4 +90,48 @@ class DecoratorsTest(TestCase):
         response = callback(request)
         
         self.assertEqual(response, ['test2', 'test1'])
-        
+
+    def test_cache_page_new_style(self):
+        """
+        Test that we can call cache_page the new way
+        """
+        def my_view(request):
+            return "response"
+        my_view_cached = cache_page(123)(my_view)
+        self.assertEqual(my_view_cached(HttpRequest()), "response")
+        my_view_cached2 = cache_page(123, key_prefix="test")(my_view)
+        self.assertEqual(my_view_cached2(HttpRequest()), "response")
+
+    def test_cache_page_old_style(self):
+        """
+        Test that we can call cache_page the old way
+        """
+        def my_view(request):
+            return "response"
+        my_view_cached = cache_page(my_view, 123)
+        self.assertEqual(my_view_cached(HttpRequest()), "response")
+        my_view_cached2 = cache_page(my_view, 123, key_prefix="test")
+        self.assertEqual(my_view_cached2(HttpRequest()), "response")
+
+
+# For testing method_decorator, a decorator that assumes a single argument.
+# We will get type arguments if there is a mismatch in the number of arguments.
+def simple_dec(func):
+    def wrapper(arg):
+        return func("test:" + arg)
+    return wraps(func)(wrapper)
+
+simple_dec_m = method_decorator(simple_dec)
+
+
+class MethodDecoratorTests(TestCase):
+    """
+    Tests for method_decorator
+    """
+    def test_method_decorator(self):
+        class Test(object):
+            @simple_dec_m
+            def say(self, arg):
+                return arg
+
+        self.assertEqual("test:hello", Test().say("hello"))

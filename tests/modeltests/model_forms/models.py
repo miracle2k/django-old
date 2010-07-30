@@ -13,12 +13,6 @@ import tempfile
 from django.db import models
 from django.core.files.storage import FileSystemStorage
 
-# Python 2.3 doesn't have sorted()
-try:
-    sorted
-except NameError:
-    from django.utils.itercompat import sorted
-
 temp_storage_dir = tempfile.mkdtemp()
 temp_storage = FileSystemStorage(temp_storage_dir)
 
@@ -74,7 +68,7 @@ class ImprovedArticleWithParentLink(models.Model):
     article = models.OneToOneField(Article, parent_link=True)
 
 class BetterWriter(Writer):
-    pass
+    score = models.IntegerField()
 
 class WriterProfile(models.Model):
     writer = models.OneToOneField(Writer, primary_key=True)
@@ -99,11 +93,15 @@ class TextFile(models.Model):
         return self.description
 
 try:
-    # If PIL is available, try testing ImageFields.
-    # Checking for the existence of Image is enough for CPython, but
-    # for PyPy, you need to check for the underlying modules
-    # If PIL is not available, ImageField tests are omitted.
-    from PIL import Image, _imaging
+    # If PIL is available, try testing ImageFields. Checking for the existence
+    # of Image is enough for CPython, but for PyPy, you need to check for the
+    # underlying modules If PIL is not available, ImageField tests are omitted.
+    # Try to import PIL in either of the two ways it can end up installed.
+    try:
+        from PIL import Image, _imaging
+    except ImportError:
+        import Image, _imaging
+
     test_images = True
 
     class ImageFile(models.Model):
@@ -183,6 +181,18 @@ class Book(models.Model):
     class Meta:
         unique_together = ('title', 'author')
 
+class BookXtra(models.Model):
+    isbn = models.CharField(max_length=16, unique=True)
+    suffix1 = models.IntegerField(blank=True, default=0)
+    suffix2 = models.IntegerField(blank=True, default=0)
+
+    class Meta:
+        unique_together = (('suffix1', 'suffix2'))
+        abstract = True
+
+class DerivedBook(Book, BookXtra):
+    pass
+
 class ExplicitPK(models.Model):
     key = models.CharField(max_length=20, primary_key=True)
     desc = models.CharField(max_length=20, blank=True, unique=True)
@@ -200,6 +210,31 @@ class Post(models.Model):
 
     def __unicode__(self):
         return self.name
+
+class DerivedPost(Post):
+    pass
+
+class BigInt(models.Model):
+    biggie = models.BigIntegerField()
+
+    def __unicode__(self):
+        return unicode(self.biggie)
+
+class MarkupField(models.CharField):
+    def __init__(self, *args, **kwargs):
+        kwargs["max_length"] = 20
+        super(MarkupField, self).__init__(*args, **kwargs)
+
+    def formfield(self, **kwargs):
+        # don't allow this field to be used in form (real use-case might be
+        # that you know the markup will always be X, but it is among an app
+        # that allows the user to say it could be something else)
+        # regressed at r10062
+        return None
+
+class CustomFieldForExclusionModel(models.Model):
+    name = models.CharField(max_length=10)
+    markup = MarkupField()
 
 __test__ = {'API_TESTS': """
 >>> from django import forms
@@ -286,6 +321,27 @@ Using 'fields' *and* 'exclude'. Not sure why you'd want to do this, but uh,
 
 >>> CategoryForm.base_fields.keys()
 ['name']
+
+Using 'widgets'
+
+>>> class CategoryForm(ModelForm):
+...
+...     class Meta:
+...         model = Category
+...         fields = ['name', 'url', 'slug']
+...         widgets = {
+...             'name': forms.Textarea,
+...             'url': forms.TextInput(attrs={'class': 'url'})
+...         }
+
+>>> str(CategoryForm()['name'])
+'<textarea id="id_name" rows="10" cols="40" name="name"></textarea>'
+
+>>> str(CategoryForm()['url'])
+'<input id="id_url" type="text" class="url" name="url" maxlength="40" />'
+
+>>> str(CategoryForm()['slug'])
+'<input id="id_slug" type="text" name="slug" maxlength="20" />'
 
 Don't allow more than one 'model' definition in the inheritance hierarchy.
 Technically, it would generate a valid form, but the fact that the resulting
@@ -467,10 +523,10 @@ Traceback (most recent call last):
 ValueError: The Category could not be created because the data didn't validate.
 
 Create a couple of Writers.
->>> w = Writer(name='Mike Royko')
->>> w.save()
->>> w = Writer(name='Bob Woodward')
->>> w.save()
+>>> w_royko = Writer(name='Mike Royko')
+>>> w_royko.save()
+>>> w_woodward = Writer(name='Bob Woodward')
+>>> w_woodward.save()
 
 ManyToManyFields are represented by a MultipleChoiceField, ForeignKeys and any
 fields with the 'choices' attribute are represented by a ChoiceField.
@@ -484,8 +540,8 @@ fields with the 'choices' attribute are represented by a ChoiceField.
 <tr><th>Pub date:</th><td><input type="text" name="pub_date" /></td></tr>
 <tr><th>Writer:</th><td><select name="writer">
 <option value="" selected="selected">---------</option>
-<option value="1">Mike Royko</option>
-<option value="2">Bob Woodward</option>
+<option value="...">Mike Royko</option>
+<option value="...">Bob Woodward</option>
 </select></td></tr>
 <tr><th>Article:</th><td><textarea rows="10" cols="40" name="article"></textarea></td></tr>
 <tr><th>Status:</th><td><select name="status">
@@ -539,8 +595,8 @@ inserted as 'initial' data in each Field.
 <li>Pub date: <input type="text" name="pub_date" value="1988-01-04" /></li>
 <li>Writer: <select name="writer">
 <option value="">---------</option>
-<option value="1" selected="selected">Mike Royko</option>
-<option value="2">Bob Woodward</option>
+<option value="..." selected="selected">Mike Royko</option>
+<option value="...">Bob Woodward</option>
 </select></li>
 <li>Article: <textarea rows="10" cols="40" name="article">Hello.</textarea></li>
 <li>Status: <select name="status">
@@ -554,7 +610,9 @@ inserted as 'initial' data in each Field.
 <option value="2">It&#39;s a test</option>
 <option value="3">Third test</option>
 </select>  Hold down "Control", or "Command" on a Mac, to select more than one.</li>
->>> f = TestArticleForm({'headline': u'Test headline', 'slug': 'test-headline', 'pub_date': u'1984-02-06', 'writer': u'1', 'article': 'Hello.'}, instance=art)
+>>> f = TestArticleForm({'headline': u'Test headline', 'slug': 'test-headline', 'pub_date': u'1984-02-06', 'writer': unicode(w_royko.pk), 'article': 'Hello.'}, instance=art)
+>>> f.errors
+{}
 >>> f.is_valid()
 True
 >>> test_art = f.save()
@@ -600,8 +658,8 @@ Add some categories and test the many-to-many form output.
 <li>Pub date: <input type="text" name="pub_date" value="1988-01-04" /></li>
 <li>Writer: <select name="writer">
 <option value="">---------</option>
-<option value="1" selected="selected">Mike Royko</option>
-<option value="2">Bob Woodward</option>
+<option value="..." selected="selected">Mike Royko</option>
+<option value="...">Bob Woodward</option>
 </select></li>
 <li>Article: <textarea rows="10" cols="40" name="article">Hello.</textarea></li>
 <li>Status: <select name="status">
@@ -624,8 +682,8 @@ Initial values can be provided for model forms
 <li>Pub date: <input type="text" name="pub_date" /></li>
 <li>Writer: <select name="writer">
 <option value="" selected="selected">---------</option>
-<option value="1">Mike Royko</option>
-<option value="2">Bob Woodward</option>
+<option value="...">Mike Royko</option>
+<option value="...">Bob Woodward</option>
 </select></li>
 <li>Article: <textarea rows="10" cols="40" name="article"></textarea></li>
 <li>Status: <select name="status">
@@ -641,7 +699,7 @@ Initial values can be provided for model forms
 </select>  Hold down "Control", or "Command" on a Mac, to select more than one.</li>
 
 >>> f = TestArticleForm({'headline': u'New headline', 'slug': u'new-headline', 'pub_date': u'1988-01-04',
-...     'writer': u'1', 'article': u'Hello.', 'categories': [u'1', u'2']}, instance=new_art)
+...     'writer': unicode(w_royko.pk), 'article': u'Hello.', 'categories': [u'1', u'2']}, instance=new_art)
 >>> new_art = f.save()
 >>> new_art.id
 1
@@ -651,7 +709,7 @@ Initial values can be provided for model forms
 
 Now, submit form data with no categories. This deletes the existing categories.
 >>> f = TestArticleForm({'headline': u'New headline', 'slug': u'new-headline', 'pub_date': u'1988-01-04',
-...     'writer': u'1', 'article': u'Hello.'}, instance=new_art)
+...     'writer': unicode(w_royko.pk), 'article': u'Hello.'}, instance=new_art)
 >>> new_art = f.save()
 >>> new_art.id
 1
@@ -664,7 +722,7 @@ Create a new article, with categories, via the form.
 ...     class Meta:
 ...         model = Article
 >>> f = ArticleForm({'headline': u'The walrus was Paul', 'slug': u'walrus-was-paul', 'pub_date': u'1967-11-01',
-...     'writer': u'1', 'article': u'Test.', 'categories': [u'1', u'2']})
+...     'writer': unicode(w_royko.pk), 'article': u'Test.', 'categories': [u'1', u'2']})
 >>> new_art = f.save()
 >>> new_art.id
 2
@@ -677,7 +735,7 @@ Create a new article, with no categories, via the form.
 ...     class Meta:
 ...         model = Article
 >>> f = ArticleForm({'headline': u'The walrus was Paul', 'slug': u'walrus-was-paul', 'pub_date': u'1967-11-01',
-...     'writer': u'1', 'article': u'Test.'})
+...     'writer': unicode(w_royko.pk), 'article': u'Test.'})
 >>> new_art = f.save()
 >>> new_art.id
 3
@@ -691,7 +749,7 @@ The m2m data won't be saved until save_m2m() is invoked on the form.
 ...     class Meta:
 ...         model = Article
 >>> f = ArticleForm({'headline': u'The walrus was Paul', 'slug': 'walrus-was-paul', 'pub_date': u'1967-11-01',
-...     'writer': u'1', 'article': u'Test.', 'categories': [u'1', u'2']})
+...     'writer': unicode(w_royko.pk), 'article': u'Test.', 'categories': [u'1', u'2']})
 >>> new_art = f.save(commit=False)
 
 # Manually save the instance
@@ -740,8 +798,8 @@ the data in the database when the form is instantiated.
 <li>Pub date: <input type="text" name="pub_date" /></li>
 <li>Writer: <select name="writer">
 <option value="" selected="selected">---------</option>
-<option value="1">Mike Royko</option>
-<option value="2">Bob Woodward</option>
+<option value="...">Mike Royko</option>
+<option value="...">Bob Woodward</option>
 </select></li>
 <li>Article: <textarea rows="10" cols="40" name="article"></textarea></li>
 <li>Status: <select name="status">
@@ -765,9 +823,9 @@ the data in the database when the form is instantiated.
 <li>Pub date: <input type="text" name="pub_date" /></li>
 <li>Writer: <select name="writer">
 <option value="" selected="selected">---------</option>
-<option value="1">Mike Royko</option>
-<option value="2">Bob Woodward</option>
-<option value="3">Carl Bernstein</option>
+<option value="...">Mike Royko</option>
+<option value="...">Bob Woodward</option>
+<option value="...">Carl Bernstein</option>
 </select></li>
 <li>Article: <textarea rows="10" cols="40" name="article"></textarea></li>
 <li>Status: <select name="status">
@@ -967,10 +1025,20 @@ ValidationError: [u'Select a valid choice. 4 is not one of the available choices
 >>> ImprovedArticleWithParentLinkForm.base_fields.keys()
 []
 
->>> bw = BetterWriter(name=u'Joe Better')
+>>> bw = BetterWriter(name=u'Joe Better', score=10)
 >>> bw.save()
 >>> sorted(model_to_dict(bw).keys())
-['id', 'name', 'writer_ptr']
+['id', 'name', 'score', 'writer_ptr']
+
+>>> class BetterWriterForm(ModelForm):
+...     class Meta:
+...         model = BetterWriter
+>>> form = BetterWriterForm({'name': 'Some Name', 'score': 12})
+>>> form.is_valid()
+True
+>>> bw2 = form.save()
+>>> bw2.delete()
+
 
 >>> class WriterProfileForm(ModelForm):
 ...     class Meta:
@@ -979,15 +1047,15 @@ ValidationError: [u'Select a valid choice. 4 is not one of the available choices
 >>> print form.as_p()
 <p><label for="id_writer">Writer:</label> <select name="writer" id="id_writer">
 <option value="" selected="selected">---------</option>
-<option value="1">Mike Royko</option>
-<option value="2">Bob Woodward</option>
-<option value="3">Carl Bernstein</option>
-<option value="4">Joe Better</option>
+<option value="...">Mike Royko</option>
+<option value="...">Bob Woodward</option>
+<option value="...">Carl Bernstein</option>
+<option value="...">Joe Better</option>
 </select></p>
 <p><label for="id_age">Age:</label> <input type="text" name="age" id="id_age" /></p>
 
 >>> data = {
-...     'writer': u'2',
+...     'writer': unicode(w_woodward.pk),
 ...     'age': u'65',
 ... }
 >>> form = WriterProfileForm(data)
@@ -999,10 +1067,10 @@ ValidationError: [u'Select a valid choice. 4 is not one of the available choices
 >>> print form.as_p()
 <p><label for="id_writer">Writer:</label> <select name="writer" id="id_writer">
 <option value="">---------</option>
-<option value="1">Mike Royko</option>
-<option value="2" selected="selected">Bob Woodward</option>
-<option value="3">Carl Bernstein</option>
-<option value="4">Joe Better</option>
+<option value="...">Mike Royko</option>
+<option value="..." selected="selected">Bob Woodward</option>
+<option value="...">Carl Bernstein</option>
+<option value="...">Joe Better</option>
 </select></p>
 <p><label for="id_age">Age:</label> <input type="text" name="age" value="65" id="id_age" /></p>
 
@@ -1103,7 +1171,6 @@ True
 >>> instance.delete()
 
 # Test the non-required FileField
-
 >>> f = TextFileForm(data={'description': u'Assistance'})
 >>> f.fields['file'].required = False
 >>> f.is_valid()
@@ -1145,6 +1212,28 @@ True
 # Delete the current file since this is not done by Django.
 >>> instance.file.delete()
 >>> instance.delete()
+
+# BigIntegerField ################################################################
+>>> class BigIntForm(forms.ModelForm):
+...     class Meta:
+...         model = BigInt
+...
+>>> bif = BigIntForm({'biggie': '-9223372036854775808'})
+>>> bif.is_valid()
+True
+>>> bif = BigIntForm({'biggie': '-9223372036854775809'})
+>>> bif.is_valid()
+False
+>>> bif.errors
+{'biggie': [u'Ensure this value is greater than or equal to -9223372036854775808.']}
+>>> bif = BigIntForm({'biggie': '9223372036854775807'})
+>>> bif.is_valid()
+True
+>>> bif = BigIntForm({'biggie': '9223372036854775808'})
+>>> bif.is_valid()
+False
+>>> bif.errors
+{'biggie': [u'Ensure this value is less than or equal to 9223372036854775807.']}
 """}
 
 if test_images:
@@ -1336,62 +1425,39 @@ __test__['API_TESTS'] += """
 ...    class Meta:
 ...        model = CommaSeparatedInteger
 
->>> f = CommaSeparatedIntegerForm().fields['field']
->>> f.clean('1,2,3')
-u'1,2,3'
->>> f.clean('1a,2')
-Traceback (most recent call last):
-...
-ValidationError: [u'Enter only digits separated by commas.']
->>> f.clean(',,,,')
-u',,,,'
->>> f.clean('1.2')
-Traceback (most recent call last):
-...
-ValidationError: [u'Enter only digits separated by commas.']
->>> f.clean('1,a,2')
-Traceback (most recent call last):
-...
-ValidationError: [u'Enter only digits separated by commas.']
->>> f.clean('1,,2')
-u'1,,2'
->>> f.clean('1')
-u'1'
-
-# unique/unique_together validation
-
->>> class ProductForm(ModelForm):
-...     class Meta:
-...         model = Product
->>> form = ProductForm({'slug': 'teddy-bear-blue'})
->>> form.is_valid()
+>>> f = CommaSeparatedIntegerForm({'field': '1,2,3'})
+>>> f.is_valid()
 True
->>> obj = form.save()
->>> obj
-<Product: teddy-bear-blue>
->>> form = ProductForm({'slug': 'teddy-bear-blue'})
->>> form.is_valid()
-False
->>> form._errors
-{'slug': [u'Product with this Slug already exists.']}
->>> form = ProductForm({'slug': 'teddy-bear-blue'}, instance=obj)
->>> form.is_valid()
+>>> f.cleaned_data
+{'field': u'1,2,3'}
+>>> f = CommaSeparatedIntegerForm({'field': '1a,2'})
+>>> f.errors
+{'field': [u'Enter only digits separated by commas.']}
+>>> f = CommaSeparatedIntegerForm({'field': ',,,,'})
+>>> f.is_valid()
 True
+>>> f.cleaned_data
+{'field': u',,,,'}
+>>> f = CommaSeparatedIntegerForm({'field': '1.2'})
+>>> f.errors
+{'field': [u'Enter only digits separated by commas.']}
+>>> f = CommaSeparatedIntegerForm({'field': '1,a,2'})
+>>> f.errors
+{'field': [u'Enter only digits separated by commas.']}
+>>> f = CommaSeparatedIntegerForm({'field': '1,,2'})
+>>> f.is_valid()
+True
+>>> f.cleaned_data
+{'field': u'1,,2'}
+>>> f = CommaSeparatedIntegerForm({'field': '1'})
+>>> f.is_valid()
+True
+>>> f.cleaned_data
+{'field': u'1'}
 
-# ModelForm test of unique_together constraint
->>> class PriceForm(ModelForm):
-...     class Meta:
-...         model = Price
->>> form = PriceForm({'price': '6.00', 'quantity': '1'})
->>> form.is_valid()
-True
->>> form.save()
-<Price: 1 for 6.00>
->>> form = PriceForm({'price': '6.00', 'quantity': '1'})
->>> form.is_valid()
-False
->>> form._errors
-{'__all__': [u'Price with this Price and Quantity already exists.']}
+This Price instance generated by this form is not valid because the quantity
+field is required, but the form is valid because the field is excluded from
+the form. This is for backwards compatibility.
 
 >>> class PriceForm(ModelForm):
 ...     class Meta:
@@ -1400,51 +1466,30 @@ False
 >>> form = PriceForm({'price': '6.00'})
 >>> form.is_valid()
 True
+>>> price = form.save(commit=False)
+>>> price.full_clean()
+Traceback (most recent call last):
+  ...
+ValidationError: {'quantity': [u'This field cannot be null.']}
 
-# Unique & unique together with null values
->>> class BookForm(ModelForm):
+The form should not validate fields that it doesn't contain even if they are
+specified using 'fields', not 'exclude'.
 ...     class Meta:
-...        model = Book
->>> w = Writer.objects.get(name='Mike Royko')
->>> form = BookForm({'title': 'I May Be Wrong But I Doubt It', 'author' : w.pk})
->>> form.is_valid()
-True
->>> form.save()
-<Book: Book object>
->>> form = BookForm({'title': 'I May Be Wrong But I Doubt It', 'author' : w.pk})
->>> form.is_valid()
-False
->>> form._errors
-{'__all__': [u'Book with this Title and Author already exists.']}
->>> form = BookForm({'title': 'I May Be Wrong But I Doubt It'})
->>> form.is_valid()
-True
->>> form.save()
-<Book: Book object>
->>> form = BookForm({'title': 'I May Be Wrong But I Doubt It'})
+...         model = Price
+...         fields = ('price',)
+>>> form = PriceForm({'price': '6.00'})
 >>> form.is_valid()
 True
 
-# Test for primary_key being in the form and failing validation.
->>> class ExplicitPKForm(ModelForm):
-...     class Meta:
-...         model = ExplicitPK
-...         fields = ('key', 'desc',)
->>> form = ExplicitPKForm({'key': u'', 'desc': u'' })
->>> form.is_valid()
-False
+The form should still have an instance of a model that is not complete and
+not saved into a DB yet.
 
-# Ensure keys and blank character strings are tested for uniqueness.
->>> form = ExplicitPKForm({'key': u'key1', 'desc': u''})
->>> form.is_valid()
+>>> form.instance.price
+Decimal('6.00')
+>>> form.instance.quantity is None
 True
->>> form.save()
-<ExplicitPK: key1>
->>> form = ExplicitPKForm({'key': u'key1', 'desc': u''})
->>> form.is_valid()
-False
->>> sorted(form.errors.items())
-[('__all__', [u'Explicit pk with this Key and Desc already exists.']), ('desc', [u'Explicit pk with this Desc already exists.']), ('key', [u'Explicit pk with this Key already exists.'])]
+>>> form.instance.pk is None
+True
 
 # Choices on CharField and IntegerField
 >>> class ArticleForm(ModelForm):
@@ -1511,37 +1556,18 @@ ValidationError: [u'Select a valid choice. z is not one of the available choices
 <tr><th><label for="id_description">Description:</label></th><td><input type="text" name="description" id="id_description" /></td></tr>
 <tr><th><label for="id_url">The URL:</label></th><td><input id="id_url" type="text" name="url" maxlength="40" /></td></tr>
 
-### Validation on unique_for_date
+# Model field that returns None to exclude itself with explicit fields ########
 
->>> p = Post.objects.create(title="Django 1.0 is released", slug="Django 1.0", subtitle="Finally", posted=datetime.date(2008, 9, 3))
->>> class PostForm(ModelForm):
+>>> class CustomFieldForExclusionForm(ModelForm):
 ...     class Meta:
-...         model = Post
+...         model = CustomFieldForExclusionModel
+...         fields = ['name', 'markup']
 
->>> f = PostForm({'title': "Django 1.0 is released", 'posted': '2008-09-03'})
->>> f.is_valid()
-False
->>> f.errors
-{'title': [u'Title must be unique for Posted date.']}
->>> f = PostForm({'title': "Work on Django 1.1 begins", 'posted': '2008-09-03'})
->>> f.is_valid()
-True
->>> f = PostForm({'title': "Django 1.0 is released", 'posted': '2008-09-04'})
->>> f.is_valid()
-True
->>> f = PostForm({'slug': "Django 1.0", 'posted': '2008-01-01'})
->>> f.is_valid()
-False
->>> f.errors
-{'slug': [u'Slug must be unique for Posted year.']}
->>> f = PostForm({'subtitle': "Finally", 'posted': '2008-09-30'})
->>> f.is_valid()
-False
->>> f.errors
-{'subtitle': [u'Subtitle must be unique for Posted month.']}
->>> f = PostForm({'subtitle': "Finally", "title": "Django 1.0 is released", "slug": "Django 1.0", 'posted': '2008-09-03'}, instance=p)
->>> f.is_valid()
-True
+>>> CustomFieldForExclusionForm.base_fields.keys()
+['name']
+
+>>> print CustomFieldForExclusionForm()
+<tr><th><label for="id_name">Name:</label></th><td><input id="id_name" type="text" name="name" maxlength="10" /></td></tr>
 
 # Clean up
 >>> import shutil

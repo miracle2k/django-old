@@ -72,16 +72,16 @@ u'\\\\ : backslashes, too'
 u'Hello world'
 
 >>> escapejs(u'"double quotes" and \'single quotes\'')
-u'\\x22double quotes\\x22 and \\x27single quotes\\x27'
+u'\\u0022double quotes\\u0022 and \\u0027single quotes\\u0027'
 
 >>> escapejs(ur'\ : backslashes, too')
-u'\\x5C : backslashes, too'
+u'\\u005C : backslashes, too'
 
 >>> escapejs(u'and lots of whitespace: \r\n\t\v\f\b')
-u'and lots of whitespace: \\x0D\\x0A\\x09\\x0B\\x0C\\x08'
+u'and lots of whitespace: \\u000D\\u000A\\u0009\\u000B\\u000C\\u0008'
 
 >>> escapejs(ur'<script>and this</script>')
-u'\\x3Cscript\\x3Eand this\\x3C/script\\x3E'
+u'\\u003Cscript\\u003Eand this\\u003C/script\\u003E'
 
 >>> escapejs(u'paragraph separator:\u2029and line separator:\u2028')
 u'paragraph separator:\\u2029and line separator:\\u2028'
@@ -476,6 +476,15 @@ u'1024.0 MB'
 >>> filesizeformat(1024*1024*1024)
 u'1.0 GB'
 
+>>> filesizeformat(complex(1,-1))
+u'0 bytes'
+
+>>> filesizeformat("")
+u'0 bytes'
+
+>>> filesizeformat(u"\N{GREEK SMALL LETTER ALPHA}")
+u'0 bytes'
+
 >>> pluralize(1)
 u''
 
@@ -570,12 +579,6 @@ u'123'
 
 from django.template.defaultfilters import *
 import datetime
-
-# Python 2.3 doesn't have sorted()
-try:
-    sorted
-except NameError:
-    from django.utils.itercompat import sorted
 
 if __name__ == '__main__':
     import doctest

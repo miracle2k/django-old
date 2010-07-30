@@ -157,7 +157,7 @@ False
 
 # The underlying query only makes one join when a related table is referenced twice.
 >>> queryset = Article.objects.filter(reporter__first_name__exact='John', reporter__last_name__exact='Smith')
->>> sql = queryset.query.as_sql()[0]
+>>> sql = queryset.query.get_compiler(queryset.db).as_sql()[0]
 >>> sql.count('INNER JOIN')
 1
 
@@ -262,6 +262,13 @@ FieldError: Cannot resolve keyword 'reporter_id' into field. Choices are: headli
 [<Reporter: John Smith>]
 >>> Reporter.objects.filter(article__reporter__exact=r).distinct()
 [<Reporter: John Smith>]
+
+# Regression for #12876 -- Model methods that include queries that
+# recursive don't cause recursion depth problems under deepcopy.
+>>> r.cached_query = Article.objects.filter(reporter=r)
+>>> from copy import deepcopy
+>>> deepcopy(r)
+<Reporter: John Smith>
 
 # Check that implied __exact also works.
 >>> Reporter.objects.filter(article__reporter=r).distinct()

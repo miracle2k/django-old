@@ -3,7 +3,7 @@ from django.conf import settings
 from django.contrib.auth.models import User
 from django.contrib.comments import signals
 from django.contrib.comments.models import Comment
-from regressiontests.comment_tests.models import Article
+from regressiontests.comment_tests.models import Article, Book
 from regressiontests.comment_tests.tests import CommentTestCase
 
 post_redirect_re = re.compile(r'^http://testserver/posted/\?c=(?P<pk>\d+$)')
@@ -42,6 +42,22 @@ class CommentViewTests(CommentTestCase):
         a = Article.objects.get(pk=1)
         data = self.getValidData(a)
         data["object_pk"] = "14"
+        response = self.client.post("/post/", data)
+        self.assertEqual(response.status_code, 400)
+
+    def testPostInvalidIntegerPK(self):
+        a = Article.objects.get(pk=1)
+        data = self.getValidData(a)
+        data["comment"] = "This is another comment"
+        data["object_pk"] = u'\ufffd'
+        response = self.client.post("/post/", data)
+        self.assertEqual(response.status_code, 400)
+
+    def testPostInvalidDecimalPK(self):
+        b = Book.objects.get(pk='12.34')
+        data = self.getValidData(b)
+        data["comment"] = "This is another comment"
+        data["object_pk"] = 'cookies'
         response = self.client.post("/post/", data)
         self.assertEqual(response.status_code, 400)
 
@@ -158,12 +174,13 @@ class CommentViewTests(CommentTestCase):
         actually getting saved
         """
         def receive(sender, **kwargs): return False
-        signals.comment_will_be_posted.connect(receive)
+        signals.comment_will_be_posted.connect(receive, dispatch_uid="comment-test")
         a = Article.objects.get(pk=1)
         data = self.getValidData(a)
         response = self.client.post("/post/", data)
         self.assertEqual(response.status_code, 400)
         self.assertEqual(Comment.objects.count(), 0)
+        signals.comment_will_be_posted.disconnect(dispatch_uid="comment-test")
 
     def testWillBePostedSignalModifyComment(self):
         """
@@ -187,11 +204,11 @@ class CommentViewTests(CommentTestCase):
         location = response["Location"]
         match = post_redirect_re.match(location)
         self.failUnless(match != None, "Unexpected redirect location: %s" % location)
-        
+
         data["next"] = "/somewhere/else/"
         data["comment"] = "This is another comment"
         response = self.client.post("/post/", data)
-        location = response["Location"]        
+        location = response["Location"]
         match = re.search(r"^http://testserver/somewhere/else/\?c=\d+$", location)
         self.failUnless(match != None, "Unexpected redirect location: %s" % location)
 
@@ -199,7 +216,7 @@ class CommentViewTests(CommentTestCase):
         a = Article.objects.get(pk=1)
         data = self.getValidData(a)
         response = self.client.post("/post/", data)
-        location = response["Location"]        
+        location = response["Location"]
         match = post_redirect_re.match(location)
         self.failUnless(match != None, "Unexpected redirect location: %s" % location)
         pk = int(match.group('pk'))
@@ -216,7 +233,22 @@ class CommentViewTests(CommentTestCase):
         data["next"] = "/somewhere/else/?foo=bar"
         data["comment"] = "This is another comment"
         response = self.client.post("/post/", data)
-        location = response["Location"]        
+        location = response["Location"]
         match = re.search(r"^http://testserver/somewhere/else/\?foo=bar&c=\d+$", location)
         self.failUnless(match != None, "Unexpected redirect location: %s" % location)
-        
+
+    def testCommentPostRedirectWithInvalidIntegerPK(self):
+        """
+        Tests that attempting to retrieve the location specified in the
+        post redirect, after adding some invalid data to the expected
+        querystring it ends with, doesn't cause a server error.
+        """
+        a = Article.objects.get(pk=1)
+        data = self.getValidData(a)
+        data["comment"] = "This is another comment"
+        response = self.client.post("/post/", data)
+        location = response["Location"]
+        broken_location = location + u"\ufffd"
+        response = self.client.get(broken_location)
+        self.assertEqual(response.status_code, 200)
+

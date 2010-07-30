@@ -232,16 +232,7 @@ Methods
 
    Returns ``True`` if the request was made via an ``XMLHttpRequest``, by
    checking the ``HTTP_X_REQUESTED_WITH`` header for the string
-   ``'XMLHttpRequest'``. The following major JavaScript libraries all send this
-   header:
-
-       * jQuery
-       * Dojo
-       * MochiKit
-       * MooTools
-       * Prototype
-       * YUI
-
+   ``'XMLHttpRequest'``. Most modern JavaScript libraries send this header.
    If you write your own XMLHttpRequest call (on the browser side), you'll
    have to set this header manually if you want ``is_ajax()`` to work.
 
@@ -271,7 +262,7 @@ a subclass of dictionary. Exceptions are outlined here:
 
     Returns the value for the given key. If the key has more than one value,
     ``__getitem__()`` returns the last value. Raises
-    ``django.utils.datastructure.MultiValueDictKeyError`` if the key does not
+    ``django.utils.datastructures.MultiValueDictKeyError`` if the key does not
     exist. (This is a subclass of Python's standard ``KeyError``, so you can
     stick to catching ``KeyError``.)
 
@@ -295,7 +286,7 @@ a subclass of dictionary. Exceptions are outlined here:
 .. method:: QueryDict.setdefault(key, default)
 
     Just like the standard dictionary ``setdefault()`` method, except it uses
-    ``__setitem__`` internally.
+    ``__setitem__()`` internally.
 
 .. method:: QueryDict.update(other_dict)
 
@@ -307,24 +298,24 @@ a subclass of dictionary. Exceptions are outlined here:
           >>> q = q.copy() # to make it mutable
           >>> q.update({'a': '2'})
           >>> q.getlist('a')
-          ['1', '2']
+          [u'1', u'2']
           >>> q['a'] # returns the last
-          ['2']
+          [u'2']
 
 .. method:: QueryDict.items()
 
     Just like the standard dictionary ``items()`` method, except this uses the
-    same last-value logic as ``__getitem()__``. For example::
+    same last-value logic as ``__getitem__()``. For example::
 
            >>> q = QueryDict('a=1&a=2&a=3')
            >>> q.items()
-           [('a', '3')]
-           
+           [(u'a', u'3')]
+
 .. method:: QueryDict.iteritems()
 
     Just like the standard dictionary ``iteritems()`` method. Like
     :meth:`QueryDict.items()` this uses the same last-value logic as
-    :meth:`QueryDict.__getitem()__`.
+    :meth:`QueryDict.__getitem__()`.
 
 .. method:: QueryDict.iterlists()
 
@@ -334,11 +325,11 @@ a subclass of dictionary. Exceptions are outlined here:
 .. method:: QueryDict.values()
 
     Just like the standard dictionary ``values()`` method, except this uses the
-    same last-value logic as ``__getitem()__``. For example::
+    same last-value logic as ``__getitem__()``. For example::
 
            >>> q = QueryDict('a=1&a=2&a=3')
            >>> q.values()
-           ['3']
+           [u'3']
 
 .. method:: QueryDict.itervalues()
 
@@ -378,7 +369,7 @@ In addition, ``QueryDict`` has the following methods:
 
          >>> q = QueryDict('a=1&a=2&a=3')
          >>> q.lists()
-         [('a', ['1', '2', '3'])]
+         [(u'a', [u'1', u'2', u'3'])]
 
 .. method:: QueryDict.urlencode()
 
@@ -443,7 +434,7 @@ Setting headers
 To set a header in your response, just treat it like a dictionary::
 
     >>> response = HttpResponse()
-    >>> response['Pragma'] = 'no-cache'
+    >>> response['Cache-Control'] = 'no-cache'
 
 .. versionadded:: 1.1
 
@@ -470,6 +461,10 @@ Attributes
 
     A normal Python string representing the content, encoded from a Unicode
     object if necessary.
+
+.. attribute:: HttpResponse.status_code
+
+    The `HTTP Status code`_ for the response.
 
 Methods
 -------
@@ -607,4 +602,3 @@ types of HTTP responses. Like ``HttpResponse``, these subclasses live in
 .. class:: HttpResponseServerError
 
     Acts just like :class:`HttpResponse` but uses a 500 status code.
-

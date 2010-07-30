@@ -16,6 +16,16 @@ js_info_dict = {
     'packages': ('regressiontests.views',),
 }
 
+js_info_dict_multi_packages1 = {
+    'domain': 'djangojs',
+    'packages': ('regressiontests.views.app1', 'regressiontests.views.app2'),
+}
+
+js_info_dict_multi_packages2 = {
+    'domain': 'djangojs',
+    'packages': ('regressiontests.views.app3', 'regressiontests.views.app4'),
+}
+
 date_based_info_dict = {
     'queryset': Article.objects.all(),
     'date_field': 'date_created',
@@ -36,6 +46,8 @@ urlpatterns = patterns('',
     # i18n views
     (r'^i18n/', include('django.conf.urls.i18n')),
     (r'^jsi18n/$', 'django.views.i18n.javascript_catalog', js_info_dict),
+    (r'^jsi18n_multi_packages1/$', 'django.views.i18n.javascript_catalog', js_info_dict_multi_packages1),
+    (r'^jsi18n_multi_packages2/$', 'django.views.i18n.javascript_catalog', js_info_dict_multi_packages2),
 
     # Static views
     (r'^site_media/(?P<path>.*)$', 'django.views.static.serve', {'document_root': media_dir}),
@@ -95,5 +107,19 @@ urlpatterns += patterns('django.views.generic.create_update',
 
 # a view that raises an exception for the debug view
 urlpatterns += patterns('',
-    (r'^raises/$', views.raises)
+    (r'^raises/$', views.raises),
+    (r'^raises404/$', views.raises404),
+)
+
+# rediriects, both temporary and permanent, with non-ASCII targets
+urlpatterns += patterns('django.views.generic.simple',
+    ('^nonascii_redirect/$', 'redirect_to',
+        {'url': u'/views/中文/target/', 'permanent': False}),
+    ('^permanent_nonascii_redirect/$', 'redirect_to',
+        {'url': u'/views/中文/target/', 'permanent': True}),
+)
+
+urlpatterns += patterns('regressiontests.views.views',
+    url(r'view_exception/(?P<n>\d+)/$', 'view_exception', name='view_exception'),
+    url(r'template_exception/(?P<n>\d+)/$', 'template_exception', name='template_exception'),
 )

@@ -36,7 +36,7 @@ To install the sitemap app, follow these steps:
     1. Add ``'django.contrib.sitemaps'`` to your :setting:`INSTALLED_APPS`
        setting.
        
-    2. Make sure ``'django.template.loaders.app_directories.load_template_source'``
+    2. Make sure ``'django.template.loaders.app_directories.Loader'``
        is in your :setting:`TEMPLATE_LOADERS` setting. It's in there by default,
        so you'll only need to change this if you've changed that setting.
 
@@ -45,7 +45,7 @@ To install the sitemap app, follow these steps:
 
 (Note: The sitemap application doesn't install any database tables. The only
 reason it needs to go into :setting:`INSTALLED_APPS` is so that the
-:func:`~django.template.loaders.app_directories.load_template_source` template
+:func:`~django.template.loaders.app_directories.Loader` template
 loader can find the default templates.)
 
 Initialization
@@ -54,7 +54,7 @@ Initialization
 To activate sitemap generation on your Django site, add this line to your
 :ref:`URLconf <topics-http-urls>`::
 
-   (r'^sitemap.xml$', 'django.contrib.sitemaps.views.sitemap', {'sitemaps': sitemaps})
+   (r'^sitemap\.xml$', 'django.contrib.sitemaps.views.sitemap', {'sitemaps': sitemaps})
 
 This tells Django to build a sitemap when a client accesses :file:`/sitemap.xml`.
 
@@ -261,7 +261,7 @@ Here's an example of a :ref:`URLconf <topics-http-urls>` using both::
         # ...
 
         # the sitemap
-        (r'^sitemap.xml$', 'django.contrib.sitemaps.views.sitemap', {'sitemaps': sitemaps})
+        (r'^sitemap\.xml$', 'django.contrib.sitemaps.views.sitemap', {'sitemaps': sitemaps})
     )
 
 .. _URLconf: ../url_dispatch/
@@ -280,7 +280,7 @@ references individual sitemap files, one per each section defined in your
 
 Here's what the relevant URLconf lines would look like for the example above::
 
-   (r'^sitemap.xml$', 'django.contrib.sitemaps.views.index', {'sitemaps': sitemaps}),
+   (r'^sitemap\.xml$', 'django.contrib.sitemaps.views.index', {'sitemaps': sitemaps}),
    (r'^sitemap-(?P<section>.+)\.xml$', 'django.contrib.sitemaps.views.sitemap', {'sitemaps': sitemaps}),
 
 This will automatically generate a :file:`sitemap.xml` file that references both
