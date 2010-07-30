@@ -327,7 +327,7 @@ translates (roughly) into the following SQL::
    arguments whose names and values are evaluated at runtime. For more
    information, see `Keyword Arguments`_ in the official Python tutorial.
 
-   .. _`Keyword Arguments`: http://docs.python.org/tut/node6.html#SECTION006720000000000000000
+   .. _`Keyword Arguments`: http://docs.python.org/tutorial/controlflow.html#keyword-arguments
 
 If you pass an invalid keyword argument, a lookup function will raise
 ``TypeError``.
@@ -419,7 +419,7 @@ models doesn't have a value that meets the filter condition, Django will treat
 it as if there is an empty (all values are ``NULL``), but valid, object there.
 All this means is that no error will be raised. For example, in this filter::
 
-    Blog.objects.filter(entry__author__name='Lennon')
+    Blog.objects.filter(entry__authors__name='Lennon')
 
 (if there was a related ``Author`` model), if there was no ``author``
 associated with an entry, it would be treated as if there was also no ``name``
@@ -427,14 +427,14 @@ attached, rather than raising an error because of the missing ``author``.
 Usually this is exactly what you want to have happen. The only case where it
 might be confusing is if you are using ``isnull``. Thus::
 
-    Blog.objects.filter(entry__author__name__isnull=True)
+    Blog.objects.filter(entry__authors__name__isnull=True)
 
 will return ``Blog`` objects that have an empty ``name`` on the ``author`` and
 also those which have an empty ``author`` on the ``entry``. If you don't want
 those latter objects, you could write::
 
-    Blog.objects.filter(entry__author__isnull=False,
-            entry__author__name__isnull=True)
+    Blog.objects.filter(entry__authors__isnull=False,
+            entry__authors__name__isnull=True)
 
 Spanning multi-valued relationships
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -442,7 +442,7 @@ Spanning multi-valued relationships
 .. versionadded:: 1.0
 
 When you are filtering an object based on a ``ManyToManyField`` or a reverse
-``ForeignKeyField``, there are two different sorts of filter you may be
+``ForeignKey``, there are two different sorts of filter you may be
 interested in. Consider the ``Blog``/``Entry`` relationship (``Blog`` to
 ``Entry`` is a one-to-many relation). We might be interested in finding blogs
 that have an entry which has both *"Lennon"* in the headline and was published
@@ -512,17 +512,18 @@ than pingbacks, we construct an ``F()`` object to reference the comment count,
 and use that ``F()`` object in the query::
 
     >>> from django.db.models import F
-    >>> Entry.objects.filter(n_pingbacks__lt=F('n_comments'))
+    >>> Entry.objects.filter(n_comments__gt=F('n_pingbacks'))
 
 Django supports the use of addition, subtraction, multiplication,
 division and modulo arithmetic with ``F()`` objects, both with constants
-and with other ``F()`` objects. To find all the blog entries with *twice* as
-many comments as pingbacks, we modify the query::
+and with other ``F()`` objects. To find all the blog entries with more than
+*twice* as many comments as pingbacks, we modify the query::
 
-    >>> Entry.objects.filter(n_pingbacks__lt=F('n_comments') * 2)
+    >>> Entry.objects.filter(n_comments__gt=F('n_pingbacks') * 2)
 
-To find all the entries where the sum of the pingback count and comment count
-is greater than the rating of the entry, we would issue the query::
+To find all the entries where the rating of the entry is less than the
+sum of the pingback count and comment count, we would issue the
+query::
 
     >>> Entry.objects.filter(rating__lt=F('n_comments') + F('n_pingbacks'))
 
@@ -532,7 +533,7 @@ any joins needed to access the related object. For example, to retrieve all
 the entries where the author's name is the same as the blog name, we could
 issue the query:
 
-    >>> Entry.objects.filter(author__name=F('blog__name'))
+    >>> Entry.objects.filter(authors__name=F('blog__name'))
 
 The pk lookup shortcut
 ----------------------
@@ -618,7 +619,7 @@ in the split second between the two requests.
 
 To avoid this problem, simply save the ``QuerySet`` and reuse it::
 
-    >>> queryset = Poll.objects.all()
+    >>> queryset = Entry.objects.all()
     >>> print [p.headline for p in queryset] # Evaluate the query set.
     >>> print [p.pub_date for p in queryset] # Re-use the cache from the evaluation.
 
@@ -778,18 +779,23 @@ a ``QuerySet``. You can do this with the ``update()`` method. For example::
 You can only set non-relation fields and ``ForeignKey`` fields using this
 method. To update a non-relation field, provide the new value as a constant.
 To update ``ForeignKey`` fields, set the new value to be the new model
-instance you want to point to. Example::
+instance you want to point to. For example::
 
     >>> b = Blog.objects.get(pk=1)
 
     # Change every Entry so that it belongs to this Blog.
     >>> Entry.objects.all().update(blog=b)
 
-The ``update()`` method is applied instantly and doesn't return anything
-(similar to ``delete()``). The only restriction on the ``QuerySet`` that is
+The ``update()`` method is applied instantly and returns the number of rows
+affected by the query. The only restriction on the ``QuerySet`` that is
 updated is that it can only access one database table, the model's main
-table. So don't try to filter based on related fields or anything like that;
-it won't work.
+table. You can filter based on related fields, but you can only update columns
+in the model's main table. Example::
+
+    >>> b = Blog.objects.get(pk=1)
+
+    # Update all the headlines belonging to this Blog.
+    >>> Entry.objects.select_related().filter(blog=b).update(headline='Everything is the same')
 
 Be aware that the ``update()`` method is converted directly to an SQL
 statement. It is a bulk operation for direct updates. It doesn't run any

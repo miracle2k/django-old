@@ -1,10 +1,5 @@
 import sys
 import time
-try:
-    set
-except NameError:
-    # Python 2.3 compat
-    from sets import Set as set
 
 from django.conf import settings
 from django.core.management import call_command
@@ -73,9 +68,6 @@ class BaseDatabaseCreation(object):
                 else:
                     field_output.extend(ref_output)
             table_output.append(' '.join(field_output))
-        if opts.order_with_respect_to:
-            table_output.append(style.SQL_FIELD(qn('_order')) + ' ' + \
-                style.SQL_COLTYPE(models.IntegerField().db_type(connection=self.connection)))
         for field_constraints in opts.unique_together:
             table_output.append(style.SQL_KEYWORD('UNIQUE') + ' (%s)' % \
                 ", ".join([style.SQL_FIELD(qn(opts.get_field(f).column)) for f in field_constraints]))
@@ -145,6 +137,12 @@ class BaseDatabaseCreation(object):
 
     def sql_for_many_to_many(self, model, style):
         "Return the CREATE TABLE statments for all the many-to-many tables defined on a model"
+        import warnings
+        warnings.warn(
+            'Database creation API for m2m tables has been deprecated. M2M models are now automatically generated',
+            PendingDeprecationWarning
+        )
+
         output = []
         for f in model._meta.local_many_to_many:
             if model._meta.managed or f.rel.to._meta.managed:
@@ -153,11 +151,17 @@ class BaseDatabaseCreation(object):
 
     def sql_for_many_to_many_field(self, model, f, style):
         "Return the CREATE TABLE statements for a single m2m field"
+        import warnings
+        warnings.warn(
+            'Database creation API for m2m tables has been deprecated. M2M models are now automatically generated',
+            PendingDeprecationWarning
+        )
+
         from django.db import models
         from django.db.backends.util import truncate_name
 
         output = []
-        if f.creates_table:
+        if f.auto_created:
             opts = model._meta
             qn = self.connection.ops.quote_name
             tablespace = f.db_tablespace or opts.db_tablespace
@@ -210,6 +214,12 @@ class BaseDatabaseCreation(object):
 
     def sql_for_inline_many_to_many_references(self, model, field, style):
         "Create the references to other tables required by a many-to-many table"
+        import warnings
+        warnings.warn(
+            'Database creation API for m2m tables has been deprecated. M2M models are now automatically generated',
+            PendingDeprecationWarning
+        )
+
         from django.db import models
         opts = model._meta
         qn = self.connection.ops.quote_name
@@ -245,6 +255,8 @@ class BaseDatabaseCreation(object):
 
     def sql_indexes_for_field(self, model, f, style):
         "Return the CREATE INDEX SQL statements for a single model field"
+        from django.db.backends.util import truncate_name
+
         if f.db_index and not f.unique:
             qn = self.connection.ops.quote_name
             tablespace = f.db_tablespace or model._meta.db_tablespace
@@ -256,8 +268,9 @@ class BaseDatabaseCreation(object):
                     tablespace_sql = ''
             else:
                 tablespace_sql = ''
+            i_name = '%s_%s' % (model._meta.db_table, self._digest(f.column))
             output = [style.SQL_KEYWORD('CREATE INDEX') + ' ' +
-                style.SQL_TABLE(qn('%s_%s' % (model._meta.db_table, f.column))) + ' ' +
+                style.SQL_TABLE(qn(truncate_name(i_name, self.connection.ops.max_name_length()))) + ' ' +
                 style.SQL_KEYWORD('ON') + ' ' +
                 style.SQL_TABLE(qn(model._meta.db_table)) + ' ' +
                 "(%s)" % style.SQL_FIELD(qn(f.column)) +
@@ -300,15 +313,21 @@ class BaseDatabaseCreation(object):
                 (style.SQL_KEYWORD('ALTER TABLE'),
                 style.SQL_TABLE(qn(table)),
                 style.SQL_KEYWORD(self.connection.ops.drop_foreignkey_sql()),
-                style.SQL_FIELD(truncate_name(r_name, self.connection.ops.max_name_length()))))
+                style.SQL_FIELD(qn(truncate_name(r_name, self.connection.ops.max_name_length())))))
         del references_to_delete[model]
         return output
 
     def sql_destroy_many_to_many(self, model, f, style):
         "Returns the DROP TABLE statements for a single m2m field"
+        import warnings
+        warnings.warn(
+            'Database creation API for m2m tables has been deprecated. M2M models are now automatically generated',
+            PendingDeprecationWarning
+        )
+
         qn = self.connection.ops.quote_name
         output = []
-        if f.creates_table:
+        if f.auto_created:
             output.append("%s %s;" % (style.SQL_KEYWORD('DROP TABLE'),
                 style.SQL_TABLE(qn(f.m2m_db_table()))))
             ds = self.connection.ops.drop_sequence_sql("%s_%s" % (model._meta.db_table, f.column))

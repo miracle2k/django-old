@@ -14,10 +14,6 @@ class SQLCompiler(object):
         self.using = using
         self.quote_cache = {}
 
-        # Check that the compiler will be able to execute the query
-        for alias, aggregate in self.query.aggregate_select.items():
-            self.connection.ops.check_aggregate_support(aggregate)
-
     def pre_sql_setup(self):
         """
         Does any necessary class setup immediately prior to producing SQL. This
@@ -84,12 +80,6 @@ class SQLCompiler(object):
         if where:
             result.append('WHERE %s' % where)
             params.extend(w_params)
-        if self.query.extra_where:
-            if not where:
-                result.append('WHERE')
-            else:
-                result.append('AND')
-            result.append(' AND '.join(self.query.extra_where))
 
         grouping, gb_params = self.get_grouping()
         if grouping:
@@ -124,20 +114,21 @@ class SQLCompiler(object):
                         result.append('LIMIT %d' % val)
                 result.append('OFFSET %d' % self.query.low_mark)
 
-        params.extend(self.query.extra_params)
         return ' '.join(result), tuple(params)
 
     def as_nested_sql(self):
         """
         Perform the same functionality as the as_sql() method, returning an
         SQL string and parameters. However, the alias prefixes are bumped
-        beforehand (in a copy -- the current query isn't changed) and any
-        ordering is removed.
+        beforehand (in a copy -- the current query isn't changed), and any
+        ordering is removed if the query is unsliced.
 
         Used when nesting this query inside another.
         """
         obj = self.query.clone()
-        obj.clear_ordering(True)
+        if obj.low_mark == 0 and obj.high_mark is None:
+            # If there is no slicing in use, then we can safely drop all ordering
+            obj.clear_ordering(True)
         obj.bump_prefix()
         return obj.get_compiler(connection=self.connection).as_sql()
 
@@ -222,7 +213,7 @@ class SQLCompiler(object):
         return result
 
     def get_default_columns(self, with_aliases=False, col_aliases=None,
-            start_alias=None, opts=None, as_pairs=False):
+            start_alias=None, opts=None, as_pairs=False, local_only=False):
         """
         Computes the default columns for selecting every field in the base
         model. Will sometimes be called to pull in related models (e.g. via
@@ -247,6 +238,8 @@ class SQLCompiler(object):
         if start_alias:
             seen = {None: start_alias}
         for field, model in opts.get_fields_with_model():
+            if local_only and model is not None:
+                continue
             if start_alias:
                 try:
                     alias = seen[model]
@@ -489,7 +482,7 @@ class SQLCompiler(object):
                 elif hasattr(col, 'as_sql'):
                     result.append(col.as_sql(qn))
                 else:
-                    result.append(str(col))
+                    result.append('(%s)' % str(col))
         return result, params
 
     def fill_related_selections(self, opts=None, root_alias=None, cur_depth=1,
@@ -520,7 +513,7 @@ class SQLCompiler(object):
 
         # Setup for the case when only particular related fields should be
         # included in the related selection.
-        if requested is None and restricted is not False:
+        if requested is None:
             if isinstance(self.query.select_related, dict):
                 requested = self.query.select_related
                 restricted = True
@@ -537,10 +530,7 @@ class SQLCompiler(object):
             avoid = avoid_set.copy()
             dupe_set = orig_dupe_set.copy()
             table = f.rel.to._meta.db_table
-            if nullable or f.null:
-                promote = True
-            else:
-                promote = False
+            promote = nullable or f.null
             if model:
                 int_opts = opts
                 alias = root_alias
@@ -556,8 +546,8 @@ class SQLCompiler(object):
                     lhs_col = int_opts.parents[int_model].column
                     dedupe = lhs_col in opts.duplicate_targets
                     if dedupe:
-                        avoid.update(self.query.dupe_avoidance.get(id(opts), lhs_col),
-                                ())
+                        avoid.update(self.query.dupe_avoidance.get((id(opts), lhs_col),
+                                ()))
                         dupe_set.add((opts, lhs_col))
                     int_opts = int_model._meta
                     alias = self.query.join((alias, int_opts.db_table, lhs_col,
@@ -591,14 +581,77 @@ class SQLCompiler(object):
                 next = requested.get(f.name, {})
             else:
                 next = False
-            if f.null is not None:
-                new_nullable = f.null
-            else:
-                new_nullable = None
+            new_nullable = f.null or promote
             for dupe_opts, dupe_col in dupe_set:
                 self.query.update_dupe_avoidance(dupe_opts, dupe_col, alias)
             self.fill_related_selections(f.rel.to._meta, alias, cur_depth + 1,
                     used, next, restricted, new_nullable, dupe_set, avoid)
+
+        if restricted:
+            related_fields = [
+                (o.field, o.model)
+                for o in opts.get_all_related_objects()
+                if o.field.unique
+            ]
+            for f, model in related_fields:
+                if not select_related_descend(f, restricted, requested, reverse=True):
+                    continue
+                # The "avoid" set is aliases we want to avoid just for this
+                # particular branch of the recursion. They aren't permanently
+                # forbidden from reuse in the related selection tables (which is
+                # what "used" specifies).
+                avoid = avoid_set.copy()
+                dupe_set = orig_dupe_set.copy()
+                table = model._meta.db_table
+
+                int_opts = opts
+                alias = root_alias
+                alias_chain = []
+                chain = opts.get_base_chain(f.rel.to)
+                if chain is not None:
+                    for int_model in chain:
+                        # Proxy model have elements in base chain
+                        # with no parents, assign the new options
+                        # object and skip to the next base in that
+                        # case
+                        if not int_opts.parents[int_model]:
+                            int_opts = int_model._meta
+                            continue
+                        lhs_col = int_opts.parents[int_model].column
+                        dedupe = lhs_col in opts.duplicate_targets
+                        if dedupe:
+                            avoid.update((self.query.dupe_avoidance.get(id(opts), lhs_col),
+                                ()))
+                            dupe_set.add((opts, lhs_col))
+                        int_opts = int_model._meta
+                        alias = self.query.join(
+                            (alias, int_opts.db_table, lhs_col, int_opts.pk.column),
+                            exclusions=used, promote=True, reuse=used
+                        )
+                        alias_chain.append(alias)
+                        for dupe_opts, dupe_col in dupe_set:
+                            self.query.update_dupe_avoidance(dupe_opts, dupe_col, alias)
+                    dedupe = f.column in opts.duplicate_targets
+                    if dupe_set or dedupe:
+                        avoid.update(self.query.dupe_avoidance.get((id(opts), f.column), ()))
+                        if dedupe:
+                            dupe_set.add((opts, f.column))
+                alias = self.query.join(
+                    (alias, table, f.rel.get_related_field().column, f.column),
+                    exclusions=used.union(avoid),
+                    promote=True
+                )
+                used.add(alias)
+                columns, aliases = self.get_default_columns(start_alias=alias,
+                    opts=model._meta, as_pairs=True, local_only=True)
+                self.query.related_select_cols.extend(columns)
+                self.query.related_select_fields.extend(model._meta.fields)
+
+                next = requested.get(f.related_query_name(), {})
+                new_nullable = f.null or None
+
+                self.fill_related_selections(model._meta, table, cur_depth+1,
+                    used, next, restricted, new_nullable)
 
     def deferred_to_columns(self):
         """

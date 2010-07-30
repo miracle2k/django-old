@@ -257,6 +257,7 @@ def get_filter_tests():
 
         'filter-phone2numeric01': ('{{ a|phone2numeric }} {{ b|phone2numeric }}', {"a": "<1-800-call-me>", "b": mark_safe("<1-800-call-me>") }, "&lt;1-800-2255-63&gt; <1-800-2255-63>"),
         'filter-phone2numeric02': ('{% autoescape off %}{{ a|phone2numeric }} {{ b|phone2numeric }}{% endautoescape %}', {"a": "<1-800-call-me>", "b": mark_safe("<1-800-call-me>") }, "<1-800-2255-63> <1-800-2255-63>"),
+        'filter-phone2numeric03': ('{{ a|phone2numeric }}', {"a": "How razorback-jumping frogs can level six piqued gymnasts!"}, "469 729672225-5867464 37647 226 53835 749 747833 49662787!"),
 
         # Ensure iriencode keeps safe strings:
         'filter-iriencode01': ('{{ url|iriencode }}', {'url': '?test=1&me=2'}, '?test=1&amp;me=2'),
@@ -294,8 +295,8 @@ def get_filter_tests():
         'autoescape-stringfilter03': (r'{{ safe|capfirst }}', {'safe': SafeClass()}, 'You &gt; me'),
         'autoescape-stringfilter04': (r'{% autoescape off %}{{ safe|capfirst }}{% endautoescape %}', {'safe': SafeClass()}, 'You &gt; me'),
 
-        'escapejs01': (r'{{ a|escapejs }}', {'a': 'testing\r\njavascript \'string" <b>escaping</b>'}, 'testing\\x0D\\x0Ajavascript \\x27string\\x22 \\x3Cb\\x3Eescaping\\x3C/b\\x3E'),
-        'escapejs02': (r'{% autoescape off %}{{ a|escapejs }}{% endautoescape %}', {'a': 'testing\r\njavascript \'string" <b>escaping</b>'}, 'testing\\x0D\\x0Ajavascript \\x27string\\x22 \\x3Cb\\x3Eescaping\\x3C/b\\x3E'),
+        'escapejs01': (r'{{ a|escapejs }}', {'a': 'testing\r\njavascript \'string" <b>escaping</b>'}, 'testing\\u000D\\u000Ajavascript \\u0027string\\u0022 \\u003Cb\\u003Eescaping\\u003C/b\\u003E'),
+        'escapejs02': (r'{% autoescape off %}{{ a|escapejs }}{% endautoescape %}', {'a': 'testing\r\njavascript \'string" <b>escaping</b>'}, 'testing\\u000D\\u000Ajavascript \\u0027string\\u0022 \\u003Cb\\u003Eescaping\\u003C/b\\u003E'),
 
 
         # length filter.
@@ -332,4 +333,13 @@ def get_filter_tests():
         'date02': (r'{{ d|date }}', {'d': datetime(2008, 1, 1)}, 'Jan. 1, 2008'),
         #Ticket 9520: Make sure |date doesn't blow up on non-dates
         'date03': (r'{{ d|date:"m" }}', {'d': 'fail_string'}, ''),
+
+         # Tests for #11687
+         'add01': (r'{{ i|add:"5" }}', {'i': 2000}, '2005'),
+         'add02': (r'{{ i|add:"napis" }}', {'i': 2000}, '2000'),
+         'add03': (r'{{ i|add:16 }}', {'i': 'not_an_int'}, 'not_an_int'),
+         'add04': (r'{{ i|add:"16" }}', {'i': 'not_an_int'}, 'not_an_int16'),
+         'add05': (r'{{ l1|add:l2 }}', {'l1': [1, 2], 'l2': [3, 4]}, '[1, 2, 3, 4]'),
+         'add06': (r'{{ t1|add:t2 }}', {'t1': (3, 4), 't2': (1, 2)}, '(3, 4, 1, 2)'),
+         'add07': (r'{{ d|add:t }}', {'d': date(2000, 1, 1), 't': timedelta(10)}, '2000-01-11'),
     }

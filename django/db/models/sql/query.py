@@ -19,7 +19,8 @@ from django.db.models.sql import aggregates as base_aggregates_module
 from django.db.models.sql.constants import *
 from django.db.models.sql.datastructures import EmptyResultSet, Empty, MultiJoin
 from django.db.models.sql.expressions import SQLEvaluator
-from django.db.models.sql.where import WhereNode, Constraint, EverythingNode, AND, OR
+from django.db.models.sql.where import (WhereNode, Constraint, EverythingNode,
+    ExtraWhere, AND, OR)
 from django.core.exceptions import FieldError
 
 __all__ = ['Query', 'RawQuery']
@@ -36,24 +37,47 @@ class RawQuery(object):
         self.using = using
         self.cursor = None
 
+        # Mirror some properties of a normal query so that
+        # the compiler can be used to process results.
+        self.low_mark, self.high_mark = 0, None  # Used for offset/limit
+        self.extra_select = {}
+        self.aggregate_select = {}
+
     def clone(self, using):
         return RawQuery(self.sql, using, params=self.params)
+
+    def convert_values(self, value, field, connection):
+        """Convert the database-returned value into a type that is consistent
+        across database backends.
+
+        By default, this defers to the underlying backend operations, but
+        it can be overridden by Query classes for specific backends.
+        """
+        return connection.ops.convert_values(value, field)
 
     def get_columns(self):
         if self.cursor is None:
             self._execute_query()
-        return [column_meta[0] for column_meta in self.cursor.description]
+        converter = connections[self.using].introspection.table_name_converter
+        return [converter(column_meta[0])
+                for column_meta in self.cursor.description]
 
     def validate_sql(self, sql):
         if not sql.lower().strip().startswith('select'):
             raise InvalidQuery('Raw queries are limited to SELECT queries. Use '
-                               'connection.cursor directly for types of queries.')
+                               'connection.cursor directly for other types of queries.')
 
     def __iter__(self):
         # Always execute a new query for a new iterator.
-        # This could be optomized with a cache at the expense of RAM.
+        # This could be optimized with a cache at the expense of RAM.
         self._execute_query()
-        return self.cursor
+        if not connections[self.using].features.can_use_chunked_reads:
+            # If the database can't use chunked reads we need to make sure we
+            # evaluate the entire query up front.
+            result = list(self.cursor)
+        else:
+            result = self.cursor
+        return iter(result)
 
     def __repr__(self):
         return "<RawQuery: %r>" % (self.sql % self.params)
@@ -126,8 +150,6 @@ class Query(object):
         self._extra_select_cache = None
 
         self.extra_tables = ()
-        self.extra_where = ()
-        self.extra_params = ()
         self.extra_order_by = ()
 
         # A tuple that is a set of model field names and either True, if these
@@ -147,7 +169,7 @@ class Query(object):
         return sql % params
 
     def __deepcopy__(self, memo):
-        result= self.clone()
+        result = self.clone(memo=memo)
         memo[id(self)] = result
         return result
 
@@ -188,6 +210,11 @@ class Query(object):
             raise ValueError("Need either using or connection")
         if using:
             connection = connections[using]
+
+        # Check that the compiler will be able to execute the query
+        for alias, aggregate in self.aggregate_select.items():
+            connection.ops.check_aggregate_support(aggregate)
+
         return connection.ops.compiler(self.compiler)(self, connection, using)
 
     def get_meta(self):
@@ -198,7 +225,7 @@ class Query(object):
         """
         return self.model._meta
 
-    def clone(self, klass=None, **kwargs):
+    def clone(self, klass=None, memo=None, **kwargs):
         """
         Creates a copy of the current instance. The 'kwargs' parameter can be
         used by clients to update attributes after copying has taken place.
@@ -222,27 +249,29 @@ class Query(object):
         obj.dupe_avoidance = self.dupe_avoidance.copy()
         obj.select = self.select[:]
         obj.tables = self.tables[:]
-        obj.where = deepcopy(self.where)
+        obj.where = deepcopy(self.where, memo=memo)
         obj.where_class = self.where_class
         if self.group_by is None:
             obj.group_by = None
         else:
             obj.group_by = self.group_by[:]
-        obj.having = deepcopy(self.having)
+        obj.having = deepcopy(self.having, memo=memo)
         obj.order_by = self.order_by[:]
         obj.low_mark, obj.high_mark = self.low_mark, self.high_mark
         obj.distinct = self.distinct
         obj.select_related = self.select_related
         obj.related_select_cols = []
-        obj.aggregates = deepcopy(self.aggregates)
+        obj.aggregates = deepcopy(self.aggregates, memo=memo)
         if self.aggregate_select_mask is None:
             obj.aggregate_select_mask = None
         else:
             obj.aggregate_select_mask = self.aggregate_select_mask.copy()
-        if self._aggregate_select_cache is None:
-            obj._aggregate_select_cache = None
-        else:
-            obj._aggregate_select_cache = self._aggregate_select_cache.copy()
+        # _aggregate_select_cache cannot be copied, as doing so breaks the
+        # (necessary) state in which both aggregates and
+        # _aggregate_select_cache point to the same underlying objects.
+        # It will get re-populated in the cloned queryset the next time it's
+        # used.
+        obj._aggregate_select_cache = None
         obj.max_depth = self.max_depth
         obj.extra = self.extra.copy()
         if self.extra_select_mask is None:
@@ -254,10 +283,8 @@ class Query(object):
         else:
             obj._extra_select_cache = self._extra_select_cache.copy()
         obj.extra_tables = self.extra_tables
-        obj.extra_where = self.extra_where
-        obj.extra_params = self.extra_params
         obj.extra_order_by = self.extra_order_by
-        obj.deferred_loading = deepcopy(self.deferred_loading)
+        obj.deferred_loading = deepcopy(self.deferred_loading, memo=memo)
         if self.filter_is_sticky and self.used_aliases:
             obj.used_aliases = self.used_aliases.copy()
         else:
@@ -378,10 +405,13 @@ class Query(object):
     def has_results(self, using):
         q = self.clone()
         q.add_extra({'a': 1}, None, None, None, None, None)
-        q.add_fields(())
+        q.select = []
+        q.select_fields = []
+        q.default_cols = False
+        q.select_related = False
         q.set_extra_mask(('a',))
         q.set_aggregate_mask(())
-        q.clear_ordering()
+        q.clear_ordering(True)
         q.set_limits(high=1)
         compiler = q.get_compiler(using=using)
         return bool(compiler.execute_sql(SINGLE))
@@ -464,9 +494,6 @@ class Query(object):
             if self.extra and rhs.extra:
                 raise ValueError("When merging querysets using 'or', you "
                         "cannot have extra(select=...) on both sides.")
-            if self.extra_where and rhs.extra_where:
-                raise ValueError("When merging querysets using 'or', you "
-                        "cannot have extra(where=...) on both sides.")
         self.extra.update(rhs.extra)
         extra_select_mask = set()
         if self.extra_select_mask is not None:
@@ -476,8 +503,6 @@ class Query(object):
         if extra_select_mask:
             self.set_extra_mask(extra_select_mask)
         self.extra_tables += rhs.extra_tables
-        self.extra_where += rhs.extra_where
-        self.extra_params += rhs.extra_params
 
         # Ordering uses the 'rhs' ordering, unless it has none, in which case
         # the current ordering is used.
@@ -531,10 +556,10 @@ class Query(object):
             # models.
             workset = {}
             for model, values in seen.iteritems():
-                for field in model._meta.local_fields:
+                for field, m in model._meta.get_fields_with_model():
                     if field in values:
                         continue
-                    add_to_dict(workset, model, field)
+                    add_to_dict(workset, m or model, field)
             for model, values in must_include.iteritems():
                 # If we haven't included a model in workset, we don't add the
                 # corresponding must_include fields for that model, since an
@@ -1065,10 +1090,7 @@ class Query(object):
                     # exclude the "foo__in=[]" case from this handling, because
                     # it's short-circuited in the Where class.
                     # We also need to handle the case where a subquery is provided
-                    entry = self.where_class()
-                    entry.add((Constraint(alias, col, None), 'isnull', True), AND)
-                    entry.negate()
-                    self.where.add(entry, AND)
+                    self.where.add((Constraint(alias, col, None), 'isnull', False), AND)
 
         if can_reuse is not None:
             can_reuse.update(join_list)
@@ -1098,13 +1120,13 @@ class Query(object):
             for child in q_object.children:
                 if connector == OR:
                     refcounts_before = self.alias_refcount.copy()
+                self.where.start_subtree(connector)
                 if isinstance(child, Node):
-                    self.where.start_subtree(connector)
                     self.add_q(child, used_aliases)
-                    self.where.end_subtree()
                 else:
                     self.add_filter(child, connector, q_object.negated,
                             can_reuse=used_aliases)
+                self.where.end_subtree()
                 if connector == OR:
                     # Aliases that were newly added or not used at all need to
                     # be promoted to outer joins if they are nullable relations.
@@ -1609,10 +1631,8 @@ class Query(object):
                 select_pairs[name] = (entry, entry_params)
             # This is order preserving, since self.extra_select is a SortedDict.
             self.extra.update(select_pairs)
-        if where:
-            self.extra_where += tuple(where)
-        if params:
-            self.extra_params += tuple(params)
+        if where or params:
+            self.where.add(ExtraWhere(where, params), AND)
         if tables:
             self.extra_tables += tuple(tables)
         if order_by:

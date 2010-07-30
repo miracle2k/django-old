@@ -18,6 +18,7 @@ class BaseSpatialOperations(object):
     geography_operators = {}
     geography_functions = {}
     gis_terms = {}
+    truncate_params = {}
 
     # Quick booleans for the type of this spatial backend, and
     # an attribute for the spatial database version tuple (if applicable)
@@ -49,6 +50,7 @@ class BaseSpatialOperations(object):
     perimeter3d = False
     point_on_surface = False
     polygonize = False
+    reverse = False
     scale = False
     snap_to_grid = False
     sym_difference = False
@@ -121,6 +123,13 @@ class BaseSpatialOperations(object):
 
     def spatial_lookup_sql(self, lvalue, lookup_type, value, field):
         raise NotImplmentedError
+
+    # Routines for getting the OGC-compliant models.
+    def geometry_columns(self):
+        raise NotImplementedError
+
+    def spatial_ref_sys(self):
+        raise NotImplementedError
 
 class SpatialRefSysMixin(object):
     """

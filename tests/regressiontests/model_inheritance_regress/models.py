@@ -6,12 +6,6 @@ import datetime
 
 from django.db import models
 
-# Python 2.3 doesn't have sorted()
-try:
-    sorted
-except NameError:
-    from django.utils.itercompat import sorted
-
 class Place(models.Model):
     name = models.CharField(max_length=50)
     address = models.CharField(max_length=80)
@@ -55,6 +49,9 @@ class ParkingLot3(Place):
 
 class Supplier(models.Model):
     restaurant = models.ForeignKey(Restaurant)
+
+class Wholesaler(Supplier):
+    retailer = models.ForeignKey(Supplier,related_name='wholesale_supplier')
 
 class Parent(models.Model):
     created = models.DateTimeField(default=datetime.datetime.now)
@@ -267,6 +264,10 @@ True
 # of what the admin interface has to do for the edit-inline case.
 >>> Supplier.objects.filter(restaurant=Restaurant(name='xx', address='yy'))
 []
+
+# Regression test for #11764.
+>>> for w in Wholesaler.objects.all().select_related():
+...     print w
 
 # Regression test for #7853
 # If the parent class has a self-referential link, make sure that any updates

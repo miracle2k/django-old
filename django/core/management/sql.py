@@ -9,11 +9,6 @@ from django.db import models
 from django.db.models import get_models
 from django.db.backends.util import truncate_name
 
-try:
-    set
-except NameError:
-    from sets import Set as set   # Python 2.3 fallback
-
 def sql_create(app, style, connection):
     "Returns a list of the CREATE TABLE SQL statements for the given app."
 
@@ -151,12 +146,12 @@ def custom_sql_for_model(model, style, connection):
     output = []
 
     # Post-creation SQL should come before any initial SQL data is loaded.
-    # However, this should not be done for fields that are part of a a parent
-    # model (via model inheritance).
-    nm = opts.init_name_map()
-    post_sql_fields = [f for f in opts.local_fields if hasattr(f, 'post_create_sql')]
-    for f in post_sql_fields:
-        output.extend(f.post_create_sql(style, model._meta.db_table))
+    # However, this should not be done for models that are unmanaged or
+    # for fields that are part of a parent model (via model inheritance).
+    if opts.managed:
+        post_sql_fields = [f for f in opts.local_fields if hasattr(f, 'post_create_sql')]
+        for f in post_sql_fields:
+            output.extend(f.post_create_sql(style, model._meta.db_table))
 
     # Some backends can't execute more than one SQL statement at a time,
     # so split into separate statements.

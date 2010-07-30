@@ -49,7 +49,7 @@ To enable CSRF protection for your views, follow these steps:
     2. In any template that uses a POST form, use the :ttag:`csrf_token` tag inside
        the ``<form>`` element if the form is for an internal URL, e.g.::
 
-           <form action="" method="POST">{% csrf_token %}
+           <form action="" method="post">{% csrf_token %}
 
        This should not be done for POST forms that target external URLs, since
        that would cause the CSRF token to be leaked, leading to a vulnerability.
@@ -178,9 +178,9 @@ continue to work for now, but they are deprecated and will be removed in Django
 django.contrib.csrf.middleware.CsrfMiddleware           django.middleware.csrf.CsrfMiddleware
 django.contrib.csrf.middleware.CsrfViewMiddleware       django.middleware.csrf.CsrfViewMiddleware
 django.contrib.csrf.middleware.CsrfResponseMiddleware   django.middleware.csrf.CsrfResponseMiddleware
-django.contrib.csrf.middleware.csrf_exempt              django.views.decorators.csrf_exempt
-django.contrib.csrf.middleware.csrf_view_exempt         django.views.decorators.csrf_view_exempt
-django.contrib.csrf.middleware.csrf_response_exempt     django.views.decorators.csrf_response_exempt
+django.contrib.csrf.middleware.csrf_exempt              django.views.decorators.csrf.csrf_exempt
+django.contrib.csrf.middleware.csrf_view_exempt         django.views.decorators.csrf.csrf_view_exempt
+django.contrib.csrf.middleware.csrf_response_exempt     django.views.decorators.csrf.csrf_response_exempt
 ======================================================  ==============================================
 
 You should update any imports, and also the paths in your
@@ -244,6 +244,8 @@ Exceptions
 ----------
 
 .. versionadded:: 1.1
+.. versionchanged:: 1.2
+    Import paths for the decorators below were changed.
 
 To manually exclude a view function from being handled by either of the two CSRF
 middleware, you can use the ``csrf_exempt`` decorator, found in the

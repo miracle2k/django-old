@@ -308,7 +308,7 @@ called **context processors** -- that take a request object as their argument
 and return a dictionary of items to be merged into the context. By default,
 :setting:`TEMPLATE_CONTEXT_PROCESSORS` is set to::
 
-    ("django.core.context_processors.auth",
+    ("django.contrib.auth.context_processors.auth",
     "django.core.context_processors.debug",
     "django.core.context_processors.i18n",
     "django.core.context_processors.media",
@@ -325,10 +325,23 @@ and return a dictionary of items to be merged into the context. By default,
    The ``'messages'`` context processor was added.  For more information, see
    the :ref:`messages documentation <ref-contrib-messages>`.
 
+.. versionchanged:: 1.2
+    The auth context processor was moved in this release from its old location
+    ``django.core.context_processors.auth`` to
+    ``django.contrib.auth.context_processors.auth``.
+
 Each processor is applied in order. That means, if one processor adds a
 variable to the context and a second processor adds a variable with the same
 name, the second will override the first. The default processors are explained
 below.
+
+.. admonition:: When context processors are applied
+
+    When you use ``RequestContext``, the variables you supply directly
+    are added first, followed any variables supplied by context
+    processors. This means that a context processor may overwrite a
+    variable you've supplied, so take care to avoid variable names
+    which overlap with those supplied by your context processors.
 
 Also, you can give ``RequestContext`` a list of additional processors, using the
 optional, third positional argument, ``processors``. In this example, the
@@ -360,8 +373,8 @@ optional, third positional argument, ``processors``. In this example, the
 
 Here's what each of the default processors does:
 
-django.core.context_processors.auth
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+django.contrib.auth.context_processors.auth
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 If :setting:`TEMPLATE_CONTEXT_PROCESSORS` contains this processor, every
 ``RequestContext`` will contain these three variables:
@@ -378,9 +391,13 @@ If :setting:`TEMPLATE_CONTEXT_PROCESSORS` contains this processor, every
       permissions that the currently logged-in user has.
 
 .. versionchanged:: 1.2
+    This context processor was moved in this release from
+    ``django.core.context_processors.auth`` to its current location.
+
+.. versionchanged:: 1.2
    Prior to version 1.2, the ``messages`` variable was a lazy accessor for
    ``user.get_and_delete_messages()``. It has been changed to include any
-   messages added via the :ref:`messages framework <ref-contrib-messages`.
+   messages added via the :ref:`messages framework <ref-contrib-messages>`.
 
 django.core.context_processors.debug
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -502,12 +519,14 @@ The Python API
 
 Django has two ways to load templates from files:
 
-``django.template.loader.get_template(template_name)``
+.. function:: django.template.loader.get_template(template_name)
+
     ``get_template`` returns the compiled template (a ``Template`` object) for
     the template with the given name. If the template doesn't exist, it raises
     ``django.template.TemplateDoesNotExist``.
 
-``django.template.loader.select_template(template_name_list)``
+.. function:: django.template.loader.select_template(template_name_list)
+
     ``select_template`` is just like ``get_template``, except it takes a list
     of template names. Of the list, it returns the first template that exists.
 
@@ -654,7 +673,8 @@ returns the resulting string::
 
 The ``render_to_string`` shortcut takes one required argument --
 ``template_name``, which should be the name of the template to load
-and render -- and two optional arguments:
+and render (or a list of template names, in which case Django will use
+the first template in the list that exists) -- and two optional arguments:
 
     dictionary
         A dictionary to be used as variables and values for the
@@ -704,7 +724,7 @@ and :setting:`TEMPLATE_DEBUG`. All available settings are described in the
 Using an alternative template language
 ======================================
 
-.. versionadded 1.2
+.. versionadded:: 1.2
 
 The Django ``Template`` and ``Loader`` classes implement a simple API for
 loading and rendering templates. By providing some simple wrapper classes that

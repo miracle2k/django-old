@@ -707,6 +707,8 @@ below -- but there are a couple that you'll almost always want to define:
         Any object that has a URL that uniquely identifies it should define this
         method.
 
+.. _overriding-model-methods:
+
 Overriding predefined model methods
 -----------------------------------
 
@@ -726,9 +728,9 @@ to happen whenever you save an object. For example (see
         name = models.CharField(max_length=100)
         tagline = models.TextField()
 
-        def save(self, force_insert=False, force_update=False):
+        def save(self, *args, **kwargs):
             do_something()
-            super(Blog, self).save(force_insert, force_update) # Call the "real" save() method.
+            super(Blog, self).save(*args, **kwargs) # Call the "real" save() method.
             do_something_else()
 
 You can also prevent saving::
@@ -737,16 +739,24 @@ You can also prevent saving::
         name = models.CharField(max_length=100)
         tagline = models.TextField()
 
-        def save(self, force_insert=False, force_update=False):
+        def save(self, *args, **kwargs):
             if self.name == "Yoko Ono's blog":
                 return # Yoko shall never have her own blog!
             else:
-                super(Blog, self).save(force_insert, force_update) # Call the "real" save() method.
+                super(Blog, self).save(*args, **kwargs) # Call the "real" save() method.
 
-It's important to remember to call the superclass method -- that's that
-``super(Blog, self).save()`` business -- to ensure that the object still gets
-saved into the database. If you forget to call the superclass method, the
-default behavior won't happen and the database won't get touched.
+It's important to remember to call the superclass method -- that's
+that ``super(Blog, self).save(*args, **kwargs)`` business -- to ensure
+that the object still gets saved into the database. If you forget to
+call the superclass method, the default behavior won't happen and the
+database won't get touched.
+
+It's also important that you pass through the arguments that can be
+passed to the model method -- that's what the ``*args, **kwargs`` bit
+does. Django will, from time to time, extend the capabilities of
+built-in model methods, adding new arguments. If you use ``*args,
+**kwargs`` in your method definitions, you are guaranteed that your
+code will automatically support those arguments when they are added.
 
 Executing custom SQL
 --------------------
@@ -860,14 +870,23 @@ field. This would normally cause a problem in abstract base classes, since the
 fields on this class are included into each of the child classes, with exactly
 the same values for the attributes (including :attr:`~django.db.models.ForeignKey.related_name`) each time.
 
+.. versionchanged:: 1.2
+
 To work around this problem, when you are using :attr:`~django.db.models.ForeignKey.related_name` in an
-abstract base class (only), part of the name should be the string
-``'%(class)s'``. This is replaced by the lower-cased name of the child class
-that the field is used in. Since each class has a different name, each related
-name will end up being different. For example::
+abstract base class (only), part of the name should contain
+``'%(app_label)s'`` and ``'%(class)s'``.
+
+- ``'%(class)s'`` is replaced by the lower-cased name of the child class
+  that the field is used in.
+- ``'%(app_label)s'`` is replaced by the lower-cased name of the app the child
+  class is contained within. Each installed application name must be unique
+  and the model class names within each app must also be unique, therefore the
+  resulting name will end up being different.
+
+For example, given an app ``common/models.py``::
 
     class Base(models.Model):
-        m2m = models.ManyToManyField(OtherModel, related_name="%(class)s_related")
+        m2m = models.ManyToManyField(OtherModel, related_name="%(app_label)s_%(class)s_related")
 
         class Meta:
             abstract = True
@@ -878,19 +897,29 @@ name will end up being different. For example::
     class ChildB(Base):
         pass
 
-The reverse name of the ``ChildA.m2m`` field will be ``childa_related``,
-whilst the reverse name of the ``ChildB.m2m`` field will be
-``childb_related``. It is up to you how you use the ``'%(class)s'`` portion to
-construct your related name, but if you forget to use it, Django will raise
+Along with another app ``rare/models.py``::
+
+    from common.models import Base
+
+    class ChildB(Base):
+        pass
+
+The reverse name of the ``commmon.ChildA.m2m`` field will be
+``common_childa_related``, whilst the reverse name of the
+``common.ChildB.m2m`` field will be ``common_childb_related``, and finally the
+reverse name of the ``rare.ChildB.m2m`` field will be ``rare_childb_related``.
+It is up to you how you use the ``'%(class)s'`` and ``'%(app_label)s`` portion
+to construct your related name, but if you forget to use it, Django will raise
 errors when you validate your models (or run :djadmin:`syncdb`).
 
-If you don't specify a :attr:`~django.db.models.ForeignKey.related_name` attribute for a field in an
-abstract base class, the default reverse name will be the name of the
-child class followed by ``'_set'``, just as it normally would be if
-you'd declared the field directly on the child class. For example, in
-the above code, if the :attr:`~django.db.models.ForeignKey.related_name` attribute was omitted, the
-reverse name for the ``m2m`` field would be ``childa_set`` in the
-``ChildA`` case and ``childb_set`` for the ``ChildB`` field.
+If you don't specify a :attr:`~django.db.models.ForeignKey.related_name`
+attribute for a field in an abstract base class, the default reverse name will
+be the name of the child class followed by ``'_set'``, just as it normally
+would be if you'd declared the field directly on the child class. For example,
+in the above code, if the :attr:`~django.db.models.ForeignKey.related_name`
+attribute was omitted, the reverse name for the ``m2m`` field would be
+``childa_set`` in the ``ChildA`` case and ``childb_set`` for the ``ChildB``
+field.
 
 .. _multi-table-inheritance:
 
@@ -923,8 +952,8 @@ If you have a ``Place`` that is also a ``Restaurant``, you can get from the
 ``Place`` object to the ``Restaurant`` object by using the lower-case version
 of the model name::
 
-    >>> p = Place.objects.filter(name="Bob's Cafe")
-    # If Bob's Cafe is a Restaurant object, this will give the child class:
+    >>> p = Place.objects.get(id=12)
+    # If p is a Restaurant object, this will give the child class:
     >>> p.restaurant
     <Restaurant: ...>
 
@@ -1052,7 +1081,7 @@ attribute when you use the proxy. This is easy::
 Now normal ``User`` queries will be unorderd and ``OrderedUser`` queries will
 be ordered by ``username``.
 
-Querysets still return the model that was requested
+QuerySets still return the model that was requested
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 There is no way to have Django return, say, a ``MyUser`` object whenever you

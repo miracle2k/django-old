@@ -6,11 +6,7 @@
 ``QuerySet`` objects to and from "flat" data (i.e. strings).
 """
 
-try:
-    from decimal import Decimal
-except ImportError:
-    from django.utils._decimal import Decimal # Python 2.3 fallback
-
+from decimal import Decimal
 from django.db import models
 
 class Category(models.Model):
@@ -276,6 +272,21 @@ None
 >>> obj = list(serializers.deserialize("json", serialized))[0]
 >>> print obj
 <DeserializedObject: serializers.Player(pk=1)>
+
+# Regression for #12524 -- dates before 1000AD get prefixed 0's on the year
+>>> a = Article.objects.create(
+...     pk=4,
+...     author = jane,
+...     headline = "Nobody remembers the early years",
+...     pub_date = datetime(1, 2, 3, 4, 5, 6))
+
+>>> serialized = serializers.serialize("json", [a])
+>>> print serialized
+[{"pk": 4, "model": "serializers.article", "fields": {"headline": "Nobody remembers the early years", "pub_date": "0001-02-03 04:05:06", "categories": [], "author": 2}}]
+
+>>> obj = list(serializers.deserialize("json", serialized))[0]
+>>> print obj.object.pub_date
+0001-02-03 04:05:06
 
 """}
 

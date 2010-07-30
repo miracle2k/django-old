@@ -1,4 +1,4 @@
-from django.db import connections, DEFAULT_DB_ALIAS
+from django.db import connections
 from django.db.models.query import sql
 
 from django.contrib.gis.db.models.fields import GeometryField
@@ -51,7 +51,8 @@ class GeoQuery(sql.Query):
         return obj
 
     def convert_values(self, value, field, connection):
-        """        Using the same routines that Oracle does we can convert our
+        """
+        Using the same routines that Oracle does we can convert our
         extra selection objects into Geometry and Distance objects.
         TODO: Make converted objects 'lazy' for less overhead.
         """
@@ -59,7 +60,11 @@ class GeoQuery(sql.Query):
             # Running through Oracle's first.
             value = super(GeoQuery, self).convert_values(value, field or GeomField(), connection)
 
-        if isinstance(field, DistanceField):
+        if value is None:
+            # Output from spatial function is NULL (e.g., called
+            # function on a geometry field with NULL value).
+            pass
+        elif isinstance(field, DistanceField):
             # Using the field's distance attribute, can instantiate
             # `Distance` with the right context.
             value = Distance(**{field.distance_att : value})

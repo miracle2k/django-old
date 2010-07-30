@@ -15,7 +15,7 @@ class ContextList(list):
             for subcontext in self:
                 if key in subcontext:
                     return subcontext[key]
-            raise KeyError
+            raise KeyError(key)
         else:
             return super(ContextList, self).__getitem__(key)
 
@@ -43,7 +43,7 @@ def setup_test_environment():
     mail.SMTPConnection = locmem.EmailBackend
 
     mail.original_email_backend = settings.EMAIL_BACKEND
-    settings.EMAIL_BACKEND = 'django.core.mail.backends.locmem'
+    settings.EMAIL_BACKEND = 'django.core.mail.backends.locmem.EmailBackend'
 
     mail.outbox = []
 

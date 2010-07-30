@@ -17,9 +17,14 @@ class Author(models.Model):
 class Book(models.Model):
     title = models.CharField(max_length=255)
     author = models.ForeignKey(Author)
+    paperback = models.BooleanField()
+    opening_line = models.TextField()
 
 class Coffee(models.Model):
     brand = models.CharField(max_length=255, db_column="name")
 
 class Reviewer(models.Model):
     reviewed = models.ManyToManyField(Book)
+
+class FriendlyAuthor(Author):
+    pass

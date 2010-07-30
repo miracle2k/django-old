@@ -28,17 +28,13 @@ import datetime
 import time
 import re
 import os
+from decimal import Decimal
 
 from unittest import TestCase
 
 from django.core.files.uploadedfile import SimpleUploadedFile
 from django.forms import *
 from django.forms.widgets import RadioFieldRenderer
-
-try:
-    from decimal import Decimal
-except ImportError:
-    from django.utils._decimal import Decimal
 
 
 def fix_os_paths(x):
@@ -203,6 +199,9 @@ class FieldsTests(TestCase):
         self.assertEqual(f.clean('3.14'), Decimal("3.14"))
         self.assertEqual(f.clean(3.14), Decimal("3.14"))
         self.assertEqual(f.clean(Decimal('3.14')), Decimal("3.14"))
+        self.assertRaisesErrorWithMessage(ValidationError, "[u'Enter a number.']", f.clean, 'NaN')
+        self.assertRaisesErrorWithMessage(ValidationError, "[u'Enter a number.']", f.clean, 'Inf')
+        self.assertRaisesErrorWithMessage(ValidationError, "[u'Enter a number.']", f.clean, '-Inf')
         self.assertRaisesErrorWithMessage(ValidationError, "[u'Enter a number.']", f.clean, 'a')
         self.assertRaisesErrorWithMessage(ValidationError, "[u'Enter a number.']", f.clean, u'łąść')
         self.assertEqual(f.clean('1.0 '), Decimal("1.0"))
@@ -386,7 +385,7 @@ class FieldsTests(TestCase):
     def test_regexfield_31(self):
         f = RegexField('^\d+$', min_length=5, max_length=10)
         self.assertRaisesErrorWithMessage(ValidationError, "[u'Ensure this value has at least 5 characters (it has 3).']", f.clean, '123')
-        self.assertRaisesErrorWithMessage(ValidationError, "[u'Ensure this value has at least 5 characters (it has 3).']", f.clean, 'abc')
+        self.assertRaisesErrorWithMessage(ValidationError, "[u'Ensure this value has at least 5 characters (it has 3).', u'Enter a valid value.']", f.clean, 'abc')
         self.assertEqual(u'12345', f.clean('12345'))
         self.assertEqual(u'1234567890', f.clean('1234567890'))
         self.assertRaisesErrorWithMessage(ValidationError, "[u'Ensure this value has at most 10 characters (it has 11).']", f.clean, '12345678901')
@@ -408,6 +407,8 @@ class FieldsTests(TestCase):
         self.assertRaisesErrorWithMessage(ValidationError, "[u'Enter a valid e-mail address.']", f.clean, 'example@inv-.-alid.com')
         self.assertEqual(u'example@valid-----hyphens.com', f.clean('example@valid-----hyphens.com'))
         self.assertEqual(u'example@valid-with-hyphens.com', f.clean('example@valid-with-hyphens.com'))
+        self.assertRaisesErrorWithMessage(ValidationError, "[u'Enter a valid e-mail address.']", f.clean, 'example@.com')
+        self.assertEqual(u'local@domain.with.idn.xyz\xe4\xf6\xfc\xdfabc.part.com', f.clean('local@domain.with.idn.xyzäöüßabc.part.com'))
 
     def test_email_regexp_for_performance(self):
         f = EmailField()
@@ -489,13 +490,14 @@ class FieldsTests(TestCase):
         self.assertRaisesErrorWithMessage(ValidationError, "[u'Enter a valid URL.']", f.clean, 'http://inv-.alid-.com')
         self.assertRaisesErrorWithMessage(ValidationError, "[u'Enter a valid URL.']", f.clean, 'http://inv-.-alid.com')
         self.assertEqual(u'http://valid-----hyphens.com/', f.clean('http://valid-----hyphens.com'))
+        self.assertEqual(u'http://some.idn.xyz\xe4\xf6\xfc\xdfabc.domain.com:123/blah', f.clean('http://some.idn.xyzäöüßabc.domain.com:123/blah'))
 
     def test_url_regex_ticket11198(self):
         f = URLField()
         # hangs "forever" if catastrophic backtracking in ticket:#11198 not fixed
         self.assertRaisesErrorWithMessage(ValidationError, "[u'Enter a valid URL.']", f.clean, 'http://%s' % ("X"*200,))
 
-        # a second test, to make sure the problem is really addressed, even on 
+        # a second test, to make sure the problem is really addressed, even on
         # domains that don't fail the domain label length check in the regex
         self.assertRaisesErrorWithMessage(ValidationError, "[u'Enter a valid URL.']", f.clean, 'http://%s' % ("X"*60,))
 
@@ -525,6 +527,13 @@ class FieldsTests(TestCase):
             f.clean('http://google.com/we-love-microsoft.html') # good domain, bad page
         except ValidationError, e:
             self.assertEqual("[u'This URL appears to be a broken link.']", str(e))
+        # Valid and existent IDN
+        self.assertEqual(u'http://\u05e2\u05d1\u05e8\u05d9\u05ea.idn.icann.org/', f.clean(u'http://עברית.idn.icann.org/'))
+        # Valid but non-existent IDN
+        try:
+            f.clean(u'http://broken.עברית.idn.icann.org/')
+        except ValidationError, e:
+            self.assertEqual("[u'This URL appears to be a broken link.']", str(e))
 
     def test_urlfield_40(self):
         f = URLField(verify_exists=True, required=False)
@@ -547,6 +556,10 @@ class FieldsTests(TestCase):
         f = URLField()
         self.assertEqual(u'http://example.com/', f.clean('http://example.com'))
         self.assertEqual(u'http://example.com/test', f.clean('http://example.com/test'))
+
+    def test_urlfield_ticket11826(self):
+        f = URLField()
+        self.assertEqual(u'http://example.com/?some_param=some_value', f.clean('http://example.com?some_param=some_value'))
 
     # BooleanField ################################################################
 

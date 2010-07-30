@@ -102,7 +102,7 @@ These files are:
       contents" of your Django-powered site. You can read more about URLs in
       :ref:`topics-http-urls`.
 
-.. _more about packages: http://docs.python.org/tut/node8.html#packages
+.. _more about packages: http://docs.python.org/tutorial/modules.html#packages
 
 The development server
 ----------------------
@@ -320,22 +320,6 @@ These concepts are represented by simple Python classes. Edit the
         choice = models.CharField(max_length=200)
         votes = models.IntegerField()
 
-.. admonition:: Errors about :attr:`~django.db.models.Field.max_length`
-
-   If Django gives you an error message saying that
-   :attr:`~django.db.models.Field.max_length` is not a valid argument, you're
-   most likely using an old version of Django. (This version of the tutorial is
-   written for the latest development version of Django.) If you're using a
-   Subversion checkout of Django's development version (see :ref:`the
-   installation docs <topics-install>` for more information), you shouldn't have
-   any problems.
-
-   If you want to stick with an older version of Django, you'll want to switch
-   to `the Django 0.96 tutorial`_, because this tutorial covers several features
-   that only exist in the Django development version.
-
-.. _the Django 0.96 tutorial: http://www.djangoproject.com/documentation/0.96/tutorial01/
-
 The code is straightforward. Each model is represented by a class that
 subclasses :class:`django.db.models.Model`. Each model has a number of class
 variables, each of which represents a database field in the model.
@@ -367,7 +351,7 @@ Finally, note a relationship is defined, using
 to a single Poll. Django supports all the common database relationships:
 many-to-ones, many-to-manys and one-to-ones.
 
-.. _`Python path`: http://docs.python.org/tut/node8.html#SECTION008110000000000000000
+.. _`Python path`: http://docs.python.org/tutorial/modules.html#the-module-search-path
 
 Activating models
 =================
@@ -672,8 +656,16 @@ Save these changes and start a new Python interactive shell by running
 
     # Give the Poll a couple of Choices. The create call constructs a new
     # choice object, does the INSERT statement, adds the choice to the set
-    # of available choices and returns the new Choice object.
+    # of available choices and returns the new Choice object. Django creates
+    # a set to hold the "other side" of a ForeignKey relation
+    # (e.g. a poll's choices) which can be accessed via the API.
     >>> p = Poll.objects.get(pk=1)
+
+    # Display any choices from the related object set -- none so far.
+    >>> p.choice_set.all()
+    []
+
+    # Create three choices.
     >>> p.choice_set.create(choice='Not much', votes=0)
     <Choice: Not much>
     >>> p.choice_set.create(choice='The sky', votes=0)
@@ -701,8 +693,9 @@ Save these changes and start a new Python interactive shell by running
     >>> c = p.choice_set.filter(choice__startswith='Just hacking')
     >>> c.delete()
 
-For full details on the database API, see our :ref:`Database API reference
-<topics-db-queries>`.
+For more information on model relations, see :ref:`Accessing related objects
+<ref-models-relations>`. For full details on the database API, see our
+:ref:`Database API reference <topics-db-queries>`.
 
 When you're comfortable with the API, read :ref:`part 2 of this tutorial
 <intro-tutorial02>` to get Django's automatic admin working.

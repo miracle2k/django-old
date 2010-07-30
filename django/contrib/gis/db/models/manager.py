@@ -10,7 +10,7 @@ class GeoManager(Manager):
     use_for_related_fields = True
 
     def get_query_set(self):
-        return GeoQuerySet(model=self.model)
+        return GeoQuerySet(self.model, using=self._db)
 
     def area(self, *args, **kwargs):
         return self.get_query_set().area(*args, **kwargs)
@@ -35,6 +35,12 @@ class GeoManager(Manager):
 
     def extent3d(self, *args, **kwargs):
         return self.get_query_set().extent3d(*args, **kwargs)
+
+    def force_rhr(self, *args, **kwargs):
+        return self.get_query_set().force_rhr(*args, **kwargs)
+
+    def geohash(self, *args, **kwargs):
+        return self.get_query_set().geohash(*args, **kwargs)
 
     def geojson(self, *args, **kwargs):
         return self.get_query_set().geojson(*args, **kwargs)
@@ -68,6 +74,9 @@ class GeoManager(Manager):
 
     def point_on_surface(self, *args, **kwargs):
         return self.get_query_set().point_on_surface(*args, **kwargs)
+
+    def reverse_geom(self, *args, **kwargs):
+        return self.get_query_set().reverse_geom(*args, **kwargs)
 
     def scale(self, *args, **kwargs):
         return self.get_query_set().scale(*args, **kwargs)

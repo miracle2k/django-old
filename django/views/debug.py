@@ -1,16 +1,18 @@
+import datetime
 import os
 import re
 import sys
-import datetime
 
 from django.conf import settings
-from django.template import Template, Context, TemplateDoesNotExist
+from django.http import HttpResponse, HttpResponseServerError, HttpResponseNotFound
+from django.template import (Template, Context, TemplateDoesNotExist,
+    TemplateSyntaxError)
 from django.utils.html import escape
 from django.utils.importlib import import_module
-from django.http import HttpResponse, HttpResponseServerError, HttpResponseNotFound
 from django.utils.encoding import smart_unicode, smart_str
 
-HIDDEN_SETTINGS = re.compile('SECRET|PASSWORD|PROFANITIES_LIST')
+
+HIDDEN_SETTINGS = re.compile('SECRET|PASSWORD|PROFANITIES_LIST|SIGNATURE')
 
 def linebreak_iter(template_source):
     yield 0
@@ -20,15 +22,31 @@ def linebreak_iter(template_source):
         p = template_source.find('\n', p+1)
     yield len(template_source) + 1
 
+def cleanse_setting(key, value):
+    """Cleanse an individual setting key/value of sensitive content.
+
+    If the value is a dictionary, recursively cleanse the keys in
+    that dictionary.
+    """
+    try:
+        if HIDDEN_SETTINGS.search(key):
+            cleansed = '********************'
+        else:
+            if isinstance(value, dict):
+                cleansed = dict((k, cleanse_setting(k, v)) for k,v in value.items())
+            else:
+                cleansed = value
+    except TypeError:
+        # If the key isn't regex-able, just return as-is.
+        cleansed = value
+    return cleansed
+
 def get_safe_settings():
     "Returns a dictionary of the settings module, with sensitive settings blurred out."
     settings_dict = {}
     for k in dir(settings):
         if k.isupper():
-            if HIDDEN_SETTINGS.search(k):
-                settings_dict[k] = '********************'
-            else:
-                settings_dict[k] = getattr(settings, k)
+            settings_dict[k] = cleanse_setting(k, getattr(settings, k))
     return settings_dict
 
 def technical_500_response(request, exc_type, exc_value, tb):
@@ -84,7 +102,8 @@ class ExceptionReporter:
                     'loader': loader_name,
                     'templates': template_list,
                 })
-        if settings.TEMPLATE_DEBUG and hasattr(self.exc_value, 'source'):
+        if (settings.TEMPLATE_DEBUG and hasattr(self.exc_value, 'source') and
+            isinstance(self.exc_value, TemplateSyntaxError)):
             self.get_template_exception_info()
 
         frames = self.get_traceback_frames()
@@ -249,7 +268,7 @@ def technical_404_response(request, exception):
     "Create a technical 404 error response. The exception should be the Http404."
     try:
         tried = exception.args[0]['tried']
-    except (IndexError, TypeError):
+    except (IndexError, TypeError, KeyError):
         tried = []
     else:
         if not tried:
@@ -402,6 +421,10 @@ TECHNICAL_500_TEMPLATE = """
     <tr>
       <th>Request URL:</th>
       <td>{{ request.build_absolute_uri|escape }}</td>
+    </tr>
+    <tr>
+      <th>Django Version:</th>
+      <td>{{ django_version_info }}</td>
     </tr>
     <tr>
       <th>Exception Type:</th>

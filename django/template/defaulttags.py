@@ -2,11 +2,7 @@
 
 import sys
 import re
-from itertools import cycle as itertools_cycle
-try:
-    reversed
-except NameError:
-    from django.utils.itercompat import reversed     # Python 2.3 fallback
+from itertools import groupby, cycle as itertools_cycle
 
 from django.template import Node, NodeList, Template, Context, Variable
 from django.template import TemplateSyntaxError, VariableDoesNotExist, BLOCK_TAG_START, BLOCK_TAG_END, VARIABLE_TAG_START, VARIABLE_TAG_END, SINGLE_BRACE_START, SINGLE_BRACE_END, COMMENT_TAG_START, COMMENT_TAG_END
@@ -14,10 +10,11 @@ from django.template import get_library, Library, InvalidTemplateLibrary
 from django.template.smartif import IfParser, Literal
 from django.conf import settings
 from django.utils.encoding import smart_str, smart_unicode
-from django.utils.itercompat import groupby
 from django.utils.safestring import mark_safe
 
 register = Library()
+# Regex for token keyword arguments
+kwarg_re = re.compile(r"(?:(\w+)=)?(.+)")
 
 class AutoEscapeControlNode(Node):
     """Implements the actions of the autoescape tag."""
@@ -101,6 +98,8 @@ class FirstOfNode(Node):
         return u''
 
 class ForNode(Node):
+    child_nodelists = ('nodelist_loop', 'nodelist_empty')
+
     def __init__(self, loopvars, sequence, is_reversed, nodelist_loop, nodelist_empty=None):
         self.loopvars, self.sequence = loopvars, sequence
         self.is_reversed = is_reversed
@@ -121,14 +120,6 @@ class ForNode(Node):
             yield node
         for node in self.nodelist_empty:
             yield node
-
-    def get_nodes_by_type(self, nodetype):
-        nodes = []
-        if isinstance(self, nodetype):
-            nodes.append(self)
-        nodes.extend(self.nodelist_loop.get_nodes_by_type(nodetype))
-        nodes.extend(self.nodelist_empty.get_nodes_by_type(nodetype))
-        return nodes
 
     def render(self, context):
         if 'forloop' in context:
@@ -185,6 +176,8 @@ class ForNode(Node):
         return nodelist.render(context)
 
 class IfChangedNode(Node):
+    child_nodelists = ('nodelist_true', 'nodelist_false')
+
     def __init__(self, nodelist_true, nodelist_false, *varlist):
         self.nodelist_true, self.nodelist_false = nodelist_true, nodelist_false
         self._last_seen = None
@@ -215,6 +208,8 @@ class IfChangedNode(Node):
         return ''
 
 class IfEqualNode(Node):
+    child_nodelists = ('nodelist_true', 'nodelist_false')
+
     def __init__(self, var1, var2, nodelist_true, nodelist_false, negate):
         self.var1, self.var2 = var1, var2
         self.nodelist_true, self.nodelist_false = nodelist_true, nodelist_false
@@ -231,6 +226,8 @@ class IfEqualNode(Node):
         return self.nodelist_false.render(context)
 
 class IfNode(Node):
+    child_nodelists = ('nodelist_true', 'nodelist_false')
+
     def __init__(self, var, nodelist_true, nodelist_false=None):
         self.nodelist_true, self.nodelist_false = nodelist_true, nodelist_false
         self.var = var
@@ -244,16 +241,13 @@ class IfNode(Node):
         for node in self.nodelist_false:
             yield node
 
-    def get_nodes_by_type(self, nodetype):
-        nodes = []
-        if isinstance(self, nodetype):
-            nodes.append(self)
-        nodes.extend(self.nodelist_true.get_nodes_by_type(nodetype))
-        nodes.extend(self.nodelist_false.get_nodes_by_type(nodetype))
-        return nodes
-
     def render(self, context):
-        if self.var.eval(context):
+        try:
+            var = self.var.eval(context)
+        except VariableDoesNotExist:
+            var = None
+
+        if var:
             return self.nodelist_true.render(context)
         else:
             return self.nodelist_false.render(context)
@@ -439,10 +433,10 @@ def autoescape(parser, token):
     """
     args = token.contents.split()
     if len(args) != 2:
-        raise TemplateSyntaxError("'Autoescape' tag requires exactly one argument.")
+        raise TemplateSyntaxError("'autoescape' tag requires exactly one argument.")
     arg = args[1]
     if arg not in (u'on', u'off'):
-        raise TemplateSyntaxError("'Autoescape' argument should be 'on' or 'off'")
+        raise TemplateSyntaxError("'autoescape' argument should be 'on' or 'off'")
     nodelist = parser.parse(('endautoescape',))
     parser.delete_first_token()
     return AutoEscapeControlNode((arg == 'on'), nodelist)
@@ -599,13 +593,12 @@ def firstof(parser, token):
 
         {% filter force_escape %}
             {% firstof var1 var2 var3 "fallback value" %}
-	{% endfilter %}
+        {% endfilter %}
 
     """
     bits = token.split_contents()[1:]
     if len(bits) < 1:
-        raise TemplateSyntaxError("'firstof' statement requires at least one"
-                                  " argument")
+        raise TemplateSyntaxError("'firstof' statement requires at least one argument")
     return FirstOfNode([parser.compile_filter(bit) for bit in bits])
 firstof = register.tag(firstof)
 
@@ -704,7 +697,7 @@ do_for = register.tag("for", do_for)
 def do_ifequal(parser, token, negate):
     bits = list(token.split_contents())
     if len(bits) != 3:
-        raise TemplateSyntaxError, "%r takes two arguments" % bits[0]
+        raise TemplateSyntaxError("%r takes two arguments" % bits[0])
     end_tag = 'end' + bits[0]
     nodelist_true = parser.parse(('else', end_tag))
     token = parser.next_token()
@@ -819,8 +812,8 @@ def do_if(parser, token):
     Arguments and operators _must_ have a space between them, so
     ``{% if 1>2 %}`` is not a valid if tag.
 
-    All supported operators are: ``or``, ``and``, ``in``, ``==`` (or ``=``),
-    ``!=``, ``>``, ``>=``, ``<`` and ``<=``.
+    All supported operators are: ``or``, ``and``, ``in``, ``not in``
+    ``==`` (or ``=``), ``!=``, ``>``, ``>=``, ``<`` and ``<=``.
 
     Operator precedence follows Python.
     """
@@ -921,7 +914,7 @@ def load(parser, token):
     for taglib in bits[1:]:
         # add the library to the parser
         try:
-            lib = get_library("django.templatetags.%s" % taglib)
+            lib = get_library(taglib)
             parser.add_library(lib)
         except InvalidTemplateLibrary, e:
             raise TemplateSyntaxError("'%s' is not a valid tag library: %s" %
@@ -943,7 +936,7 @@ def now(parser, token):
     """
     bits = token.contents.split('"')
     if len(bits) != 3:
-        raise TemplateSyntaxError, "'now' statement takes one argument"
+        raise TemplateSyntaxError("'now' statement takes one argument")
     format_string = bits[1]
     return NowNode(format_string)
 now = register.tag(now)
@@ -997,7 +990,7 @@ def regroup(parser, token):
     """
     firstbits = token.contents.split(None, 3)
     if len(firstbits) != 4:
-        raise TemplateSyntaxError, "'regroup' tag takes five arguments"
+        raise TemplateSyntaxError("'regroup' tag takes five arguments")
     target = parser.compile_filter(firstbits[1])
     if firstbits[2] != 'by':
         raise TemplateSyntaxError("second argument to 'regroup' tag must be 'by'")
@@ -1067,7 +1060,7 @@ def templatetag(parser, token):
     """
     bits = token.contents.split()
     if len(bits) != 2:
-        raise TemplateSyntaxError, "'templatetag' statement takes one argument"
+        raise TemplateSyntaxError("'templatetag' statement takes one argument")
     tag = bits[1]
     if tag not in TemplateTagNode.mapping:
         raise TemplateSyntaxError("Invalid templatetag argument: '%s'."
@@ -1083,7 +1076,11 @@ def url(parser, token):
     This is a way to define links that aren't tied to a particular URL
     configuration::
 
-        {% url path.to.some_view arg1,arg2,name1=value1 %}
+        {% url path.to.some_view arg1 arg2 %}
+
+        or
+
+        {% url path.to.some_view name1=value1 name2=value2 %}
 
     The first argument is a path to a view. It can be an absolute python path
     or just ``app_name.view_name`` without the project name if the view is
@@ -1115,21 +1112,54 @@ def url(parser, token):
     args = []
     kwargs = {}
     asvar = None
+    bits = bits[2:]
+    if len(bits) >= 2 and bits[-2] == 'as':
+        asvar = bits[-1]
+        bits = bits[:-2]
 
-    if len(bits) > 2:
-        bits = iter(bits[2:])
-        for bit in bits:
-            if bit == 'as':
-                asvar = bits.next()
+    # Backwards compatibility: check for the old comma separated format
+    # {% url urlname arg1,arg2 %}
+    # Initial check - that the first space separated bit has a comma in it
+    if bits and ',' in bits[0]:
+        check_old_format = True
+        # In order to *really* be old format, there must be a comma
+        # in *every* space separated bit, except the last.
+        for bit in bits[1:-1]:
+            if ',' not in bit:
+                # No comma in this bit. Either the comma we found
+                # in bit 1 was a false positive (e.g., comma in a string),
+                # or there is a syntax problem with missing commas
+                check_old_format = False
                 break
+    else:
+        # No comma found - must be new format.
+        check_old_format = False
+
+    if check_old_format:
+        # Confirm that this is old format by trying to parse the first
+        # argument. An exception will be raised if the comma is
+        # unexpected (i.e. outside of a static string).
+        match = kwarg_re.match(bits[0])
+        if match:
+            value = match.groups()[1]
+            try:
+                parser.compile_filter(value)
+            except TemplateSyntaxError:
+                bits = ''.join(bits).split(',')
+
+    # Now all the bits are parsed into new format,
+    # process them as template vars
+    if len(bits):
+        for bit in bits:
+            match = kwarg_re.match(bit)
+            if not match:
+                raise TemplateSyntaxError("Malformed arguments to url tag")
+            name, value = match.groups()
+            if name:
+                kwargs[name] = parser.compile_filter(value)
             else:
-                for arg in bit.split(","):
-                    if '=' in arg:
-                        k, v = arg.split('=', 1)
-                        k = k.strip()
-                        kwargs[k] = parser.compile_filter(v)
-                    elif arg:
-                        args.append(parser.compile_filter(arg))
+                args.append(parser.compile_filter(value))
+
     return URLNode(viewname, args, kwargs, asvar)
 url = register.tag(url)
 

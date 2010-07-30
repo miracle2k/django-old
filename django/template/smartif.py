@@ -56,7 +56,7 @@ def infix(bp, func):
 
         def eval(self, context):
             try:
-                return func(self.first.eval(context), self.second.eval(context))
+                return func(context, self.first, self.second)
             except Exception:
                 # Templates shouldn't throw exceptions when rendering.  We are
                 # most likely to get exceptions for things like {% if foo in bar
@@ -81,7 +81,7 @@ def prefix(bp, func):
 
         def eval(self, context):
             try:
-                return func(self.first.eval(context))
+                return func(context, self.first)
             except Exception:
                 return False
 
@@ -91,19 +91,21 @@ def prefix(bp, func):
 # Operator precedence follows Python.
 # NB - we can get slightly more accurate syntax error messages by not using the
 # same object for '==' and '='.
-
+# We defer variable evaluation to the lambda to ensure that terms are
+# lazily evaluated using Python's boolean parsing logic.
 OPERATORS = {
-    'or': infix(6, lambda x, y: x or y),
-    'and': infix(7, lambda x, y: x and y),
-    'not': prefix(8, operator.not_),
-    'in': infix(9, lambda x, y: x in y),
-    '=': infix(10, operator.eq),
-    '==': infix(10, operator.eq),
-    '!=': infix(10, operator.ne),
-    '>': infix(10, operator.gt),
-    '>=': infix(10, operator.ge),
-    '<': infix(10, operator.lt),
-    '<=': infix(10, operator.le),
+    'or': infix(6, lambda context, x, y: x.eval(context) or y.eval(context)),
+    'and': infix(7, lambda context, x, y: x.eval(context) and y.eval(context)),
+    'not': prefix(8, lambda context, x: not x.eval(context)),
+    'in': infix(9, lambda context, x, y: x.eval(context) in y.eval(context)),
+    'not in': infix(9, lambda context, x, y: x.eval(context) not in y.eval(context)),
+    '=': infix(10, lambda context, x, y: x.eval(context) == y.eval(context)),
+    '==': infix(10, lambda context, x, y: x.eval(context) == y.eval(context)),
+    '!=': infix(10, lambda context, x, y: x.eval(context) != y.eval(context)),
+    '>': infix(10, lambda context, x, y: x.eval(context) > y.eval(context)),
+    '>=': infix(10, lambda context, x, y: x.eval(context) >= y.eval(context)),
+    '<': infix(10, lambda context, x, y: x.eval(context) < y.eval(context)),
+    '<=': infix(10, lambda context, x, y: x.eval(context) <= y.eval(context)),
 }
 
 # Assign 'id' to each:
@@ -150,11 +152,23 @@ class IfParser(object):
     error_class = ValueError
 
     def __init__(self, tokens):
-        self.tokens = map(self.translate_tokens, tokens)
+        # pre-pass necessary to turn  'not','in' into single token
+        l = len(tokens)
+        mapped_tokens = []
+        i = 0
+        while i < l:
+            token = tokens[i]
+            if token == "not" and i + 1 < l and tokens[i+1] == "in":
+                token = "not in"
+                i += 1 # skip 'in'
+            mapped_tokens.append(self.translate_token(token))
+            i += 1
+
+        self.tokens = mapped_tokens
         self.pos = 0
         self.current_token = self.next()
 
-    def translate_tokens(self, token):
+    def translate_token(self, token):
         try:
             op = OPERATORS[token]
         except (KeyError, TypeError):

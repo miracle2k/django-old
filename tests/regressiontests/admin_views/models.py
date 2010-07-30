@@ -1,11 +1,17 @@
 # -*- coding: utf-8 -*-
+import datetime
 import tempfile
 import os
-from django.core.files.storage import FileSystemStorage
-from django.db import models
+
 from django.contrib import admin
+from django.core.files.storage import FileSystemStorage
 from django.contrib.admin.views.main import ChangeList
 from django.core.mail import EmailMessage
+from django.db import models
+from django import forms
+from django.forms.models import BaseModelFormSet
+from django.contrib.contenttypes import generic
+from django.contrib.contenttypes.models import ContentType
 
 class Section(models.Model):
     """
@@ -21,7 +27,7 @@ class Article(models.Model):
     title = models.CharField(max_length=100)
     content = models.TextField()
     date = models.DateTimeField()
-    section = models.ForeignKey(Section)
+    section = models.ForeignKey(Section, null=True, blank=True)
 
     def __unicode__(self):
         return self.title
@@ -29,6 +35,7 @@ class Article(models.Model):
     def model_year(self):
         return self.date.year
     model_year.admin_order_field = 'date'
+    model_year.short_description = ''
 
 class Book(models.Model):
     """
@@ -55,7 +62,8 @@ class Chapter(models.Model):
         return self.title
 
     class Meta:
-        verbose_name = u'¿Chapter?'
+        # Use a utf-8 bytestring to ensure it works (see #11710)
+        verbose_name = '¿Chapter?'
 
 class ChapterXtra1(models.Model):
     chap = models.OneToOneField(Chapter, verbose_name=u'¿Chap?')
@@ -96,6 +104,7 @@ class ArticleAdmin(admin.ModelAdmin):
     def modeladmin_year(self, obj):
         return obj.date.year
     modeladmin_year.admin_order_field = 'date'
+    modeladmin_year.short_description = None
 
 class CustomArticle(models.Model):
     content = models.TextField()
@@ -107,8 +116,10 @@ class CustomArticleAdmin(admin.ModelAdmin):
     """
     change_list_template = 'custom_admin/change_list.html'
     change_form_template = 'custom_admin/change_form.html'
+    add_form_template = 'custom_admin/add_form.html'
     object_history_template = 'custom_admin/object_history.html'
     delete_confirmation_template = 'custom_admin/delete_confirmation.html'
+    delete_selected_confirmation_template = 'custom_admin/delete_selected_confirmation.html'
 
     def changelist_view(self, request):
         "Test that extra_context works"
@@ -169,6 +180,14 @@ class Person(models.Model):
     class Meta:
         ordering = ["id"]
 
+class BasePersonModelFormSet(BaseModelFormSet):
+    def clean(self):
+        for person_dict in self.cleaned_data:
+            person = person_dict.get('id')
+            alive = person_dict.get('alive')
+            if person and alive and person.name == "Grace Hopper":
+                raise forms.ValidationError, "Grace is not a Zombie"
+
 class PersonAdmin(admin.ModelAdmin):
     list_display = ('name', 'gender', 'alive')
     list_editable = ('gender', 'alive')
@@ -176,6 +195,11 @@ class PersonAdmin(admin.ModelAdmin):
     search_fields = (u'name',)
     ordering = ["id"]
     save_as = True
+
+    def get_changelist_formset(self, request, **kwargs):
+        return super(PersonAdmin, self).get_changelist_formset(request,
+            formset=BasePersonModelFormSet, **kwargs)
+
 
 class Persona(models.Model):
     """
@@ -419,7 +443,52 @@ class CategoryInline(admin.StackedInline):
     model = Category
 
 class CollectorAdmin(admin.ModelAdmin):
-    inlines = [WidgetInline, DooHickeyInline, GrommetInline, WhatsitInline, FancyDoodadInline, CategoryInline]
+    inlines = [
+        WidgetInline, DooHickeyInline, GrommetInline, WhatsitInline,
+        FancyDoodadInline, CategoryInline
+    ]
+
+class Link(models.Model):
+    posted = models.DateField(
+        default=lambda: datetime.date.today() - datetime.timedelta(days=7)
+    )
+    url = models.URLField()
+    post = models.ForeignKey("Post")
+
+
+class LinkInline(admin.TabularInline):
+    model = Link
+    extra = 1
+
+    readonly_fields = ("posted",)
+
+
+class Post(models.Model):
+    title = models.CharField(max_length=100)
+    content = models.TextField()
+    posted = models.DateField(default=datetime.date.today)
+    public = models.NullBooleanField()
+
+    def awesomeness_level(self):
+        return "Very awesome."
+
+class PostAdmin(admin.ModelAdmin):
+    list_display = ['title', 'public']
+    readonly_fields = ('posted', 'awesomeness_level', 'coolness', 'value', lambda obj: "foo")
+
+    inlines = [
+        LinkInline
+    ]
+
+    def coolness(self, instance):
+        if instance.pk:
+            return "%d amount of cool." % instance.pk
+        else:
+            return "Unkown coolness."
+
+    def value(self, instance):
+        return 1000
+    value.short_description = 'Value in $US'
 
 class Gadget(models.Model):
     name = models.CharField(max_length=100)
@@ -434,6 +503,81 @@ class CustomChangeList(ChangeList):
 class GadgetAdmin(admin.ModelAdmin):
     def get_changelist(self, request, **kwargs):
         return CustomChangeList
+
+class Villain(models.Model):
+    name = models.CharField(max_length=100)
+
+    def __unicode__(self):
+        return self.name
+
+class SuperVillain(Villain):
+    pass
+
+class FunkyTag(models.Model):
+    "Because we all know there's only one real use case for GFKs."
+    name = models.CharField(max_length=25)
+    content_type = models.ForeignKey(ContentType)
+    object_id = models.PositiveIntegerField()
+    content_object = generic.GenericForeignKey('content_type', 'object_id')
+
+    def __unicode__(self):
+        return self.name
+
+class Plot(models.Model):
+    name = models.CharField(max_length=100)
+    team_leader = models.ForeignKey(Villain, related_name='lead_plots')
+    contact = models.ForeignKey(Villain, related_name='contact_plots')
+    tags = generic.GenericRelation(FunkyTag)
+
+    def __unicode__(self):
+        return self.name
+
+class PlotDetails(models.Model):
+    details = models.CharField(max_length=100)
+    plot = models.OneToOneField(Plot)
+
+    def __unicode__(self):
+        return self.details
+
+class SecretHideout(models.Model):
+    """ Secret! Not registered with the admin! """
+    location = models.CharField(max_length=100)
+    villain = models.ForeignKey(Villain)
+
+    def __unicode__(self):
+        return self.location
+
+class SuperSecretHideout(models.Model):
+    """ Secret! Not registered with the admin! """
+    location = models.CharField(max_length=100)
+    supervillain = models.ForeignKey(SuperVillain)
+
+    def __unicode__(self):
+        return self.location
+
+class CyclicOne(models.Model):
+    name = models.CharField(max_length=25)
+    two = models.ForeignKey('CyclicTwo')
+
+    def __unicode__(self):
+        return self.name
+
+class CyclicTwo(models.Model):
+    name = models.CharField(max_length=25)
+    one = models.ForeignKey(CyclicOne)
+
+    def __unicode__(self):
+        return self.name
+
+class Topping(models.Model):
+    name = models.CharField(max_length=20)
+
+class Pizza(models.Model):
+    name = models.CharField(max_length=20)
+    toppings = models.ManyToManyField('Topping')
+
+class PizzaAdmin(admin.ModelAdmin):
+    readonly_fields = ('toppings',)
 
 admin.site.register(Article, ArticleAdmin)
 admin.site.register(CustomArticle, CustomArticleAdmin)
@@ -458,7 +602,14 @@ admin.site.register(Recommendation, RecommendationAdmin)
 admin.site.register(Recommender)
 admin.site.register(Collector, CollectorAdmin)
 admin.site.register(Category, CategoryAdmin)
+admin.site.register(Post, PostAdmin)
 admin.site.register(Gadget, GadgetAdmin)
+admin.site.register(Villain)
+admin.site.register(SuperVillain)
+admin.site.register(Plot)
+admin.site.register(PlotDetails)
+admin.site.register(CyclicOne)
+admin.site.register(CyclicTwo)
 
 # We intentionally register Promo and ChapterXtra1 but not Chapter nor ChapterXtra2.
 # That way we cover all four cases:
@@ -472,3 +623,5 @@ admin.site.register(Gadget, GadgetAdmin)
 admin.site.register(Book, inlines=[ChapterInline])
 admin.site.register(Promo)
 admin.site.register(ChapterXtra1)
+admin.site.register(Pizza, PizzaAdmin)
+admin.site.register(Topping)

@@ -10,8 +10,9 @@ from django.utils.html import escape, conditional_escape
 from django.utils.translation import ugettext
 from django.utils.encoding import StrAndUnicode, force_unicode
 from django.utils.safestring import mark_safe
-from django.utils import datetime_safe
-from datetime import time
+from django.utils import datetime_safe, formats
+import time
+import datetime
 from util import flatatt
 from urlparse import urljoin
 
@@ -41,7 +42,7 @@ class Media(StrAndUnicode):
 
         # Any leftover attributes must be invalid.
         # if media_attrs != {}:
-        #     raise TypeError, "'class Media' has invalid attribute(s): %s" % ','.join(media_attrs.keys())
+        #     raise TypeError("'class Media' has invalid attribute(s): %s" % ','.join(media_attrs.keys()))
 
     def __unicode__(self):
         return self.render()
@@ -75,12 +76,16 @@ class Media(StrAndUnicode):
 
     def add_js(self, data):
         if data:
-            self._js.extend([path for path in data if path not in self._js])
+            for path in data:
+                if path not in self._js:
+                    self._js.append(path)
 
     def add_css(self, data):
         if data:
             for medium, paths in data.items():
-                self._css.setdefault(medium, []).extend([path for path in paths if path not in self._css[medium]])
+                for path in paths:
+                    if not self._css.get(medium) or path not in self._css[medium]:
+                        self._css.setdefault(medium, []).append(path)
 
     def __add__(self, other):
         combined = Media()
@@ -128,6 +133,7 @@ class Widget(object):
     __metaclass__ = MediaDefiningClass
     is_hidden = False          # Determines whether this corresponds to an <input type="hidden">.
     needs_multipart_form = False # Determines does this widget need multipart-encrypted form
+    is_localized = False
 
     def __init__(self, attrs=None):
         if attrs is not None:
@@ -203,12 +209,18 @@ class Input(Widget):
     """
     input_type = None # Subclasses must define this.
 
+    def _format_value(self, value):
+        if self.is_localized:
+            return formats.localize_input(value)
+        return value
+
     def render(self, name, value, attrs=None):
-        if value is None: value = ''
+        if value is None:
+            value = ''
         final_attrs = self.build_attrs(attrs, type=self.input_type, name=name)
         if value != '':
             # Only add the 'value' attribute if a value is non-empty.
-            final_attrs['value'] = force_unicode(value)
+            final_attrs['value'] = force_unicode(self._format_value(value))
         return mark_safe(u'<input%s />' % flatatt(final_attrs))
 
 class TextInput(Input):
@@ -242,9 +254,16 @@ class MultipleHiddenInput(HiddenInput):
     def render(self, name, value, attrs=None, choices=()):
         if value is None: value = []
         final_attrs = self.build_attrs(attrs, type=self.input_type, name=name)
-        return mark_safe(u'\n'.join([(u'<input%s />' %
-            flatatt(dict(value=force_unicode(v), **final_attrs)))
-            for v in value]))
+        id_ = final_attrs.get('id', None)
+        inputs = []
+        for i, v in enumerate(value):
+            input_attrs = dict(value=force_unicode(v), **final_attrs)
+            if id_:
+                # An ID attribute was given. Add a numeric index as a suffix
+                # so that the inputs don't all have the same ID attribute.
+                input_attrs['id'] = '%s_%s' % (id_, i)
+            inputs.append(u'<input%s />' % flatatt(input_attrs))
+        return mark_safe(u'\n'.join(inputs))
 
     def value_from_datadict(self, data, files, name):
         if isinstance(data, (MultiValueDict, MergeDict)):
@@ -291,18 +310,22 @@ class DateInput(Input):
             self.format = format
 
     def _format_value(self, value):
-        if value is None:
-            return ''
+        if self.is_localized:
+            return formats.localize_input(value)
         elif hasattr(value, 'strftime'):
             value = datetime_safe.new_date(value)
             return value.strftime(self.format)
         return value
 
-    def render(self, name, value, attrs=None):
-        value = self._format_value(value)
-        return super(DateInput, self).render(name, value, attrs)
-
     def _has_changed(self, initial, data):
+        # If our field has show_hidden_initial=True, initial will be a string
+        # formatted by HiddenInput using formats.localize_input, which is not
+        # necessarily the format used for this widget. Attempt to convert it.
+        try:
+            input_format = formats.get_format('DATE_INPUT_FORMATS')[0]
+            initial = datetime.date(*time.strptime(initial, input_format)[:3])
+        except (TypeError, ValueError):
+            pass
         return super(DateInput, self)._has_changed(self._format_value(initial), data)
 
 class DateTimeInput(Input):
@@ -315,18 +338,22 @@ class DateTimeInput(Input):
             self.format = format
 
     def _format_value(self, value):
-        if value is None:
-            return ''
+        if self.is_localized:
+            return formats.localize_input(value)
         elif hasattr(value, 'strftime'):
             value = datetime_safe.new_datetime(value)
             return value.strftime(self.format)
         return value
 
-    def render(self, name, value, attrs=None):
-        value = self._format_value(value)
-        return super(DateTimeInput, self).render(name, value, attrs)
-
     def _has_changed(self, initial, data):
+        # If our field has show_hidden_initial=True, initial will be a string
+        # formatted by HiddenInput using formats.localize_input, which is not
+        # necessarily the format used for this widget. Attempt to convert it.
+        try:
+            input_format = formats.get_format('DATETIME_INPUT_FORMATS')[0]
+            initial = datetime.datetime(*time.strptime(initial, input_format)[:6])
+        except (TypeError, ValueError):
+            pass
         return super(DateTimeInput, self)._has_changed(self._format_value(initial), data)
 
 class TimeInput(Input):
@@ -339,17 +366,21 @@ class TimeInput(Input):
             self.format = format
 
     def _format_value(self, value):
-        if value is None:
-            return ''
+        if self.is_localized:
+            return formats.localize_input(value)
         elif hasattr(value, 'strftime'):
             return value.strftime(self.format)
         return value
 
-    def render(self, name, value, attrs=None):
-        value = self._format_value(value)
-        return super(TimeInput, self).render(name, value, attrs)
-
     def _has_changed(self, initial, data):
+        # If our field has show_hidden_initial=True, initial will be a string
+        # formatted by HiddenInput using formats.localize_input, which is not
+        # necessarily the format used for this  widget. Attempt to convert it.
+        try:
+            input_format = formats.get_format('TIME_INPUT_FORMATS')[0]
+            initial = datetime.time(*time.strptime(initial, input_format)[3:6])
+        except (TypeError, ValueError):
+            pass
         return super(TimeInput, self)._has_changed(self._format_value(initial), data)
 
 class CheckboxInput(Widget):
@@ -377,7 +408,12 @@ class CheckboxInput(Widget):
             # A missing value means False because HTML form submission does not
             # send results for unselected checkboxes.
             return False
-        return super(CheckboxInput, self).value_from_datadict(data, files, name)
+        value = data.get(name)
+        # Translate true and false strings to boolean values.
+        values =  {'true': True, 'false': False}
+        if isinstance(value, basestring):
+            value = values.get(value.lower(), value)
+        return value
 
     def _has_changed(self, initial, data):
         # Sometimes data or initial could be None or u'' which should be the
@@ -399,7 +435,7 @@ class Select(Widget):
         options = self.render_options(choices, [value])
         if options:
             output.append(options)
-        output.append('</select>')
+        output.append(u'</select>')
         return mark_safe(u'\n'.join(output))
 
     def render_options(self, choices, selected_choices):
@@ -447,9 +483,13 @@ class NullBooleanSelect(Select):
                 False: False}.get(value, None)
 
     def _has_changed(self, initial, data):
-        # Sometimes data or initial could be None or u'' which should be the
-        # same thing as False.
-        return bool(initial) != bool(data)
+        # For a NullBooleanSelect, None (unknown) and False (No)
+        # are not the same
+        if initial is not None:
+            initial = bool(initial)
+        if data is not None:
+            data = bool(data)
+        return initial != data
 
 class SelectMultiple(Select):
     def render(self, name, value, attrs=None, choices=()):
@@ -631,6 +671,9 @@ class MultiWidget(Widget):
         super(MultiWidget, self).__init__(attrs)
 
     def render(self, name, value, attrs=None):
+        if self.is_localized:
+            for widget in self.widgets:
+                widget.is_localized = self.is_localized
         # value is a list of values, each corresponding to a widget
         # in self.widgets.
         if not isinstance(value, list):
@@ -695,6 +738,11 @@ class MultiWidget(Widget):
         return media
     media = property(_get_media)
 
+    def __deepcopy__(self, memo):
+        obj = super(MultiWidget, self).__deepcopy__(memo)
+        obj.widgets = copy.deepcopy(self.widgets)
+        return obj
+
 class SplitDateTimeWidget(MultiWidget):
     """
     A Widget that splits datetime input into two <input type="text"> boxes.
@@ -720,6 +768,10 @@ class SplitHiddenDateTimeWidget(SplitDateTimeWidget):
     """
     A Widget that splits datetime input into two <input type="hidden"> inputs.
     """
-    def __init__(self, attrs=None):
-        widgets = (HiddenInput(attrs=attrs), HiddenInput(attrs=attrs))
-        super(SplitDateTimeWidget, self).__init__(widgets, attrs)
+    is_hidden = True
+
+    def __init__(self, attrs=None, date_format=None, time_format=None):
+        super(SplitHiddenDateTimeWidget, self).__init__(attrs, date_format, time_format)
+        for widget in self.widgets:
+            widget.input_type = 'hidden'
+            widget.is_hidden = True

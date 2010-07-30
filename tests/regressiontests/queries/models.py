@@ -5,16 +5,12 @@ Various complex queries that have been problematic in the past.
 import datetime
 import pickle
 import sys
+import threading
 
 from django.conf import settings
 from django.db import models, DEFAULT_DB_ALIAS
-from django.db.models.query import Q, ITER_CHUNK_SIZE
-
-# Python 2.3 doesn't have sorted()
-try:
-    sorted
-except NameError:
-    from django.utils.itercompat import sorted
+from django.db.models import Count
+from django.db.models.query import Q, ITER_CHUNK_SIZE, EmptyQuerySet
 
 class DumbCategory(models.Model):
     pass
@@ -43,6 +39,13 @@ class Note(models.Model):
 
     def __unicode__(self):
         return self.note
+
+    def __init__(self, *args, **kwargs):
+        super(Note, self).__init__(*args, **kwargs)
+        # Regression for #13227 -- having an attribute that
+        # is unpickleable doesn't stop you from cloning queries
+        # that use objects of that type as an argument.
+        self.lock = threading.Lock()
 
 class Annotation(models.Model):
     name = models.CharField(max_length=10)
@@ -276,6 +279,16 @@ class Plaything(models.Model):
 
 
 __test__ = {'API_TESTS':"""
+>>> # Regression for #13156 -- exists() queries have minimal SQL
+>>> from django.db import connection
+>>> settings.DEBUG = True
+>>> Tag.objects.exists()
+False
+>>> # Ok - so the exist query worked - but did it include too many columns?
+>>> "id" not in connection.queries[-1]['sql'] and "name" not in connection.queries[-1]['sql']
+True
+>>> settings.DEBUG = False
+
 >>> generic = NamedCategory.objects.create(name="Generic")
 >>> t1 = Tag.objects.create(name='t1', category=generic)
 >>> t2 = Tag.objects.create(name='t2', parent=t1, category=generic)
@@ -283,9 +296,9 @@ __test__ = {'API_TESTS':"""
 >>> t4 = Tag.objects.create(name='t4', parent=t3)
 >>> t5 = Tag.objects.create(name='t5', parent=t3)
 
->>> n1 = Note.objects.create(note='n1', misc='foo')
->>> n2 = Note.objects.create(note='n2', misc='bar')
->>> n3 = Note.objects.create(note='n3', misc='foo')
+>>> n1 = Note.objects.create(note='n1', misc='foo', id=1)
+>>> n2 = Note.objects.create(note='n2', misc='bar', id=2)
+>>> n3 = Note.objects.create(note='n3', misc='foo', id=3)
 
 >>> ann1 = Annotation.objects.create(name='a1', tag=t1)
 >>> ann1.notes.add(n1)
@@ -416,6 +429,45 @@ constraints.
 []
 >>> Number.objects.filter(Q(num__gt=7) & Q(num__lt=12) | Q(num__lt=4))
 [<Number: 8>]
+
+Bug #12239
+Float was being rounded to integer on gte queries on integer field.  Tests
+show that gt, lt, gte, and lte work as desired.  Note that the fix changes
+get_prep_lookup for gte and lt queries only.
+>>> Number.objects.filter(num__gt=11.9)
+[<Number: 12>]
+>>> Number.objects.filter(num__gt=12)
+[]
+>>> Number.objects.filter(num__gt=12.0)
+[]
+>>> Number.objects.filter(num__gt=12.1)
+[]
+>>> Number.objects.filter(num__lt=12)
+[<Number: 4>, <Number: 8>]
+>>> Number.objects.filter(num__lt=12.0)
+[<Number: 4>, <Number: 8>]
+>>> Number.objects.filter(num__lt=12.1)
+[<Number: 4>, <Number: 8>, <Number: 12>]
+>>> Number.objects.filter(num__gte=11.9)
+[<Number: 12>]
+>>> Number.objects.filter(num__gte=12)
+[<Number: 12>]
+>>> Number.objects.filter(num__gte=12.0)
+[<Number: 12>]
+>>> Number.objects.filter(num__gte=12.1)
+[]
+>>> Number.objects.filter(num__gte=12.9)
+[]
+>>> Number.objects.filter(num__lte=11.9)
+[<Number: 4>, <Number: 8>]
+>>> Number.objects.filter(num__lte=12)
+[<Number: 4>, <Number: 8>, <Number: 12>]
+>>> Number.objects.filter(num__lte=12.0)
+[<Number: 4>, <Number: 8>, <Number: 12>]
+>>> Number.objects.filter(num__lte=12.1)
+[<Number: 4>, <Number: 8>, <Number: 12>]
+>>> Number.objects.filter(num__lte=12.9)
+[<Number: 4>, <Number: 8>, <Number: 12>]
 
 Bug #7872
 Another variation on the disjunctive filtering theme.
@@ -969,6 +1021,38 @@ Bug #7759 -- count should work with a partially read result set.
 ...     break
 True
 
+Bug #7235 -- an EmptyQuerySet should not raise exceptions if it is filtered.
+>>> q = EmptyQuerySet()
+>>> q.all()
+[]
+>>> q.filter(x=10)
+[]
+>>> q.exclude(y=3)
+[]
+>>> q.complex_filter({'pk': 1})
+[]
+>>> q.select_related('spam', 'eggs')
+[]
+>>> q.annotate(Count('eggs'))
+[]
+>>> q.order_by('-pub_date', 'headline')
+[]
+>>> q.distinct()
+[]
+>>> q.extra(select={'is_recent': "pub_date > '2006-01-01'"})
+[]
+>>> q.query.low_mark = 1
+>>> q.extra(select={'is_recent': "pub_date > '2006-01-01'"})
+Traceback (most recent call last):
+...
+AssertionError: Cannot change a query once a slice has been taken
+>>> q.reverse()
+[]
+>>> q.defer('spam', 'eggs')
+[]
+>>> q.only('spam', 'eggs')
+[]
+
 Bug #7791 -- there were "issues" when ordering and distinct-ing on fields
 related via ForeignKeys.
 >>> len(Note.objects.order_by('extrainfo__info').distinct())
@@ -1189,12 +1273,12 @@ True
 
 """}
 
-# In Python 2.3 and the Python 2.6 beta releases, exceptions raised in __len__
+# In Python 2.6 beta releases, exceptions raised in __len__
 # are swallowed (Python issue 1242657), so these cases return an empty list,
 # rather than raising an exception. Not a lot we can do about that,
 # unfortunately, due to the way Python handles list() calls internally. Thus,
-# we skip the tests for Python 2.3 and 2.6.
-if (2, 4) <= sys.version_info < (2, 6):
+# we skip the tests for Python 2.6.
+if sys.version_info < (2, 6):
     __test__["API_TESTS"] += """
 # If you're not careful, it's possible to introduce infinite loops via default
 # ordering on foreign keys in a cycle. We detect that.

@@ -65,6 +65,9 @@ class Client(models.Model):
     state = models.ForeignKey(State, null=True)
     status = models.ForeignKey(ClientStatus)
 
+class SpecialClient(Client):
+    value = models.IntegerField()
+
 # Some model inheritance exercises
 class Parent(models.Model):
     name = models.CharField(max_length=10)
@@ -164,5 +167,43 @@ Exercising select_related() with multi-table model inheritance.
 >>> _ = Item.objects.create(name="item2")
 >>> Item.objects.select_related("child").order_by("name")
 [<Item: item1>, <Item: item2>]
+
+# Regression for #12851 - Deferred fields are used correctly if you
+# select_related a subset of fields.
+>>> wa = State.objects.create(name="Western Australia", country=australia)
+>>> _ = Client.objects.create(name='Brian Burke', state=wa, status=active)
+>>> burke = Client.objects.select_related('state').defer('state__name').get(name='Brian Burke')
+>>> burke.name
+u'Brian Burke'
+>>> burke.state.name
+u'Western Australia'
+
+# Still works if we're dealing with an inherited class
+>>> _ = SpecialClient.objects.create(name='Troy Buswell', state=wa, status=active, value=42)
+>>> troy = SpecialClient.objects.select_related('state').defer('state__name').get(name='Troy Buswell')
+>>> troy.name
+u'Troy Buswell'
+>>> troy.value
+42
+>>> troy.state.name
+u'Western Australia'
+
+# Still works if we defer an attribute on the inherited class
+>>> troy = SpecialClient.objects.select_related('state').defer('value', 'state__name').get(name='Troy Buswell')
+>>> troy.name
+u'Troy Buswell'
+>>> troy.value
+42
+>>> troy.state.name
+u'Western Australia'
+
+# Also works if you use only, rather than defer
+>>> troy = SpecialClient.objects.select_related('state').only('name').get(name='Troy Buswell')
+>>> troy.name
+u'Troy Buswell'
+>>> troy.value
+42
+>>> troy.state.name
+u'Western Australia'
 
 """}

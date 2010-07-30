@@ -369,7 +369,14 @@ If ``template_name`` isn't specified, this view will use the template
 
 **Template context:**
 
+.. versionadded:: 1.2
+   The inclusion of ``date_list`` in the template's context is new.
+
 In addition to ``extra_context``, the template's context will be:
+
+    * ``date_list``: A list of ``datetime.date`` objects representing all
+      days that have objects available in the given month, according to
+      ``queryset``, in ascending order.    
 
     * ``month``: A ``datetime.date`` object representing the given month.
 
@@ -542,7 +549,7 @@ In addition to ``extra_context``, the template's context will be:
     * ``next_day``: A ``datetime.date`` object representing the next day. If
       the next day is in the future, this will be ``None``.
 
-    * ``previous_day``: A ``datetime.date`` object representing the given day.
+    * ``previous_day``: A ``datetime.date`` object representing the previous day.
       Unlike ``next_day``, this will never be ``None``.
 
     * ``object_list``: A list of objects available for the given day. This
@@ -1088,4 +1095,3 @@ In addition to ``extra_context``, the template's context will be:
       variable's name depends on the ``template_object_name`` parameter, which
       is ``'object'`` by default. If ``template_object_name`` is ``'foo'``,
       this variable's name will be ``foo``.
-

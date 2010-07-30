@@ -34,6 +34,17 @@ MergeDict can merge MultiValueDicts
 >>> mm.getlist('undefined')
 []
 
+>>> sorted(mm.keys())
+['key1', 'key2', 'key4']
+>>> len(mm.values())
+3
+>>> "value1" in mm.values()
+True
+>>> sorted(mm.items(), key=lambda k: k[0])
+[('key1', 'value1'), ('key2', 'value3'), ('key4', 'value6')]
+>>> [(k,mm.getlist(k)) for k in sorted(mm)]
+[('key1', ['value1']), ('key2', ['value2', 'value3']), ('key4', ['value5', 'value6'])]
+
 ### MultiValueDict ##########################################################
 
 >>> d = MultiValueDict({'name': ['Adrian', 'Simon'], 'position': ['Developer']})
@@ -60,9 +71,9 @@ MultiValueDictKeyError: "Key 'lastname' not found in <MultiValueDict: {'position
 >>> d.setlist('lastname', ['Holovaty', 'Willison'])
 >>> d.getlist('lastname')
 ['Holovaty', 'Willison']
->>> d.values() 
+>>> d.values()
 ['Developer', 'Simon', 'Willison']
->>> list(d.itervalues()) 
+>>> list(d.itervalues())
 ['Developer', 'Simon', 'Willison']
 
 ### SortedDict #################################################################
@@ -94,6 +105,9 @@ True
 'not one'
 >>> d.pop('one', 'missing')
 'missing'
+
+>>> SortedDict((i, i) for i in xrange(3))
+{0: 0, 1: 1, 2: 2}
 
 We don't know which item will be popped in popitem(), so we'll just check that
 the number of keys has decreased.

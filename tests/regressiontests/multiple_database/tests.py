@@ -1,12 +1,16 @@
 import datetime
 import pickle
+import sys
+from StringIO import StringIO
 
 from django.conf import settings
 from django.contrib.auth.models import User
-from django.db import connections
+from django.core import management
+from django.db import connections, router, DEFAULT_DB_ALIAS
+from django.db.utils import ConnectionRouter
 from django.test import TestCase
 
-from models import Book, Person, Review, UserProfile
+from models import Book, Person, Pet, Review, UserProfile
 
 try:
     # we only have these models if the user is using multi-db, it's safe the
@@ -17,6 +21,16 @@ except ImportError:
 
 class QueryTestCase(TestCase):
     multi_db = True
+
+    def test_db_selection(self):
+        "Check that querysets will use the default databse by default"
+        self.assertEquals(Book.objects.db, DEFAULT_DB_ALIAS)
+        self.assertEquals(Book.objects.all().db, DEFAULT_DB_ALIAS)
+
+        self.assertEquals(Book.objects.using('other').db, 'other')
+
+        self.assertEquals(Book.objects.db_manager('other').db, 'other')
+        self.assertEquals(Book.objects.db_manager('other').all().db, 'other')
 
     def test_default_creation(self):
         "Objects created on the default database don't leak onto other databases"
@@ -259,53 +273,113 @@ class QueryTestCase(TestCase):
         self.assertEquals(list(Person.objects.using('other').filter(book__title='Dive into HTML5').values_list('name', flat=True)),
                           [u'Mark Pilgrim'])
 
-#    def test_m2m_cross_database_protection(self):
-#        "Operations that involve sharing M2M objects across databases raise an error"
-#        # Create a book and author on the default database
-#        pro = Book.objects.create(title="Pro Django",
-#                                  published=datetime.date(2008, 12, 16))
+    def test_m2m_cross_database_protection(self):
+        "Operations that involve sharing M2M objects across databases raise an error"
+        # Create a book and author on the default database
+        pro = Book.objects.create(title="Pro Django",
+                                  published=datetime.date(2008, 12, 16))
 
-#        marty = Person.objects.create(name="Marty Alchin")
+        marty = Person.objects.create(name="Marty Alchin")
 
-#        # Create a book and author on the other database
-#        dive = Book.objects.using('other').create(title="Dive into Python",
-#                                                  published=datetime.date(2009, 5, 4))
+        # Create a book and author on the other database
+        dive = Book.objects.using('other').create(title="Dive into Python",
+                                                  published=datetime.date(2009, 5, 4))
 
-#        mark = Person.objects.using('other').create(name="Mark Pilgrim")
-#        # Set a foreign key set with an object from a different database
-#        try:
-#            marty.book_set = [pro, dive]
-#            self.fail("Shouldn't be able to assign across databases")
-#        except ValueError:
-#            pass
+        mark = Person.objects.using('other').create(name="Mark Pilgrim")
+        # Set a foreign key set with an object from a different database
+        try:
+            marty.book_set = [pro, dive]
+            self.fail("Shouldn't be able to assign across databases")
+        except ValueError:
+            pass
 
-#        # Add to an m2m with an object from a different database
-#        try:
-#            marty.book_set.add(dive)
-#            self.fail("Shouldn't be able to assign across databases")
-#        except ValueError:
-#            pass
+        # Add to an m2m with an object from a different database
+        try:
+            marty.book_set.add(dive)
+            self.fail("Shouldn't be able to assign across databases")
+        except ValueError:
+            pass
 
-#        # Set a m2m with an object from a different database
-#        try:
-#            marty.book_set = [pro, dive]
-#            self.fail("Shouldn't be able to assign across databases")
-#        except ValueError:
-#            pass
+        # Set a m2m with an object from a different database
+        try:
+            marty.book_set = [pro, dive]
+            self.fail("Shouldn't be able to assign across databases")
+        except ValueError:
+            pass
 
-#        # Add to a reverse m2m with an object from a different database
-#        try:
-#            dive.authors.add(marty)
-#            self.fail("Shouldn't be able to assign across databases")
-#        except ValueError:
-#            pass
+        # Add to a reverse m2m with an object from a different database
+        try:
+            dive.authors.add(marty)
+            self.fail("Shouldn't be able to assign across databases")
+        except ValueError:
+            pass
 
-#        # Set a reverse m2m with an object from a different database
-#        try:
-#            dive.authors = [mark, marty]
-#            self.fail("Shouldn't be able to assign across databases")
-#        except ValueError:
-#            pass
+        # Set a reverse m2m with an object from a different database
+        try:
+            dive.authors = [mark, marty]
+            self.fail("Shouldn't be able to assign across databases")
+        except ValueError:
+            pass
+
+    def test_m2m_deletion(self):
+        "Cascaded deletions of m2m relations issue queries on the right database"
+        # Create a book and author on the other database
+        dive = Book.objects.using('other').create(title="Dive into Python",
+                                                  published=datetime.date(2009, 5, 4))
+
+        mark = Person.objects.using('other').create(name="Mark Pilgrim")
+        dive.authors = [mark]
+
+        # Check the initial state
+        self.assertEquals(Person.objects.using('default').count(), 0)
+        self.assertEquals(Book.objects.using('default').count(), 0)
+        self.assertEquals(Book.authors.through.objects.using('default').count(), 0)
+
+        self.assertEquals(Person.objects.using('other').count(), 1)
+        self.assertEquals(Book.objects.using('other').count(), 1)
+        self.assertEquals(Book.authors.through.objects.using('other').count(), 1)
+
+        # Delete the object on the other database
+        dive.delete(using='other')
+
+        self.assertEquals(Person.objects.using('default').count(), 0)
+        self.assertEquals(Book.objects.using('default').count(), 0)
+        self.assertEquals(Book.authors.through.objects.using('default').count(), 0)
+
+        # The person still exists ...
+        self.assertEquals(Person.objects.using('other').count(), 1)
+        # ... but the book has been deleted
+        self.assertEquals(Book.objects.using('other').count(), 0)
+        # ... and the relationship object has also been deleted.
+        self.assertEquals(Book.authors.through.objects.using('other').count(), 0)
+
+        # Now try deletion in the reverse direction. Set up the relation again
+        dive = Book.objects.using('other').create(title="Dive into Python",
+                                                  published=datetime.date(2009, 5, 4))
+        dive.authors = [mark]
+
+        # Check the initial state
+        self.assertEquals(Person.objects.using('default').count(), 0)
+        self.assertEquals(Book.objects.using('default').count(), 0)
+        self.assertEquals(Book.authors.through.objects.using('default').count(), 0)
+
+        self.assertEquals(Person.objects.using('other').count(), 1)
+        self.assertEquals(Book.objects.using('other').count(), 1)
+        self.assertEquals(Book.authors.through.objects.using('other').count(), 1)
+
+        # Delete the object on the other database
+        mark.delete(using='other')
+
+        self.assertEquals(Person.objects.using('default').count(), 0)
+        self.assertEquals(Book.objects.using('default').count(), 0)
+        self.assertEquals(Book.authors.through.objects.using('default').count(), 0)
+
+        # The person has been deleted ...
+        self.assertEquals(Person.objects.using('other').count(), 0)
+        # ... but the book still exists
+        self.assertEquals(Book.objects.using('other').count(), 1)
+        # ... and the relationship object has been deleted.
+        self.assertEquals(Book.authors.through.objects.using('other').count(), 0)
 
     def test_foreign_key_separation(self):
         "FK fields are constrained to a single database"
@@ -401,88 +475,219 @@ class QueryTestCase(TestCase):
         self.assertEquals(list(Person.objects.using('other').filter(edited__title='Dive into Python').values_list('name', flat=True)),
                           [])
 
-#    def test_foreign_key_cross_database_protection(self):
-#        "Operations that involve sharing FK objects across databases raise an error"
-#        # Create a book and author on the default database
-#        pro = Book.objects.create(title="Pro Django",
-#                                  published=datetime.date(2008, 12, 16))
+    def test_foreign_key_cross_database_protection(self):
+        "Operations that involve sharing FK objects across databases raise an error"
+        # Create a book and author on the default database
+        pro = Book.objects.create(title="Pro Django",
+                                  published=datetime.date(2008, 12, 16))
 
-#        marty = Person.objects.create(name="Marty Alchin")
+        marty = Person.objects.create(name="Marty Alchin")
 
-#        # Create a book and author on the other database
-#        dive = Book.objects.using('other').create(title="Dive into Python",
-#                                                  published=datetime.date(2009, 5, 4))
+        # Create a book and author on the other database
+        dive = Book.objects.using('other').create(title="Dive into Python",
+                                                  published=datetime.date(2009, 5, 4))
 
-#        mark = Person.objects.using('other').create(name="Mark Pilgrim")
+        mark = Person.objects.using('other').create(name="Mark Pilgrim")
 
-#        # Set a foreign key with an object from a different database
-#        try:
-#            dive.editor = marty
-#            self.fail("Shouldn't be able to assign across databases")
-#        except ValueError:
-#            pass
+        # Set a foreign key with an object from a different database
+        try:
+            dive.editor = marty
+            self.fail("Shouldn't be able to assign across databases")
+        except ValueError:
+            pass
 
-#        # Set a foreign key set with an object from a different database
-#        try:
-#            marty.edited = [pro, dive]
-#            self.fail("Shouldn't be able to assign across databases")
-#        except ValueError:
-#            pass
+        # Set a foreign key set with an object from a different database
+        try:
+            marty.edited = [pro, dive]
+            self.fail("Shouldn't be able to assign across databases")
+        except ValueError:
+            pass
 
-#        # Add to a foreign key set with an object from a different database
-#        try:
-#            marty.edited.add(dive)
-#            self.fail("Shouldn't be able to assign across databases")
-#        except ValueError:
-#            pass
+        # Add to a foreign key set with an object from a different database
+        try:
+            marty.edited.add(dive)
+            self.fail("Shouldn't be able to assign across databases")
+        except ValueError:
+            pass
 
-#        # BUT! if you assign a FK object when the base object hasn't
-#        # been saved yet, you implicitly assign the database for the
-#        # base object.
-#        chris = Person(name="Chris Mills")
-#        html5 = Book(title="Dive into HTML5", published=datetime.date(2010, 3, 15))
-#        # initially, no db assigned
-#        self.assertEquals(chris._state.db, None)
-#        self.assertEquals(html5._state.db, None)
+        # BUT! if you assign a FK object when the base object hasn't
+        # been saved yet, you implicitly assign the database for the
+        # base object.
+        chris = Person(name="Chris Mills")
+        html5 = Book(title="Dive into HTML5", published=datetime.date(2010, 3, 15))
+        # initially, no db assigned
+        self.assertEquals(chris._state.db, None)
+        self.assertEquals(html5._state.db, None)
 
-#        # old object comes from 'other', so the new object is set to use 'other'...
-#        dive.editor = chris
-#        html5.editor = mark
-#        # self.assertEquals(chris._state.db, 'other')
-#        self.assertEquals(html5._state.db, 'other')
-#        # ... but it isn't saved yet
-#        self.assertEquals(list(Person.objects.using('other').values_list('name',flat=True)),
-#                          [u'Mark Pilgrim'])
-#        self.assertEquals(list(Book.objects.using('other').values_list('title',flat=True)),
-#                           [u'Dive into Python'])
+        # old object comes from 'other', so the new object is set to use 'other'...
+        dive.editor = chris
+        html5.editor = mark
+        self.assertEquals(chris._state.db, 'other')
+        self.assertEquals(html5._state.db, 'other')
+        # ... but it isn't saved yet
+        self.assertEquals(list(Person.objects.using('other').values_list('name',flat=True)),
+                          [u'Mark Pilgrim'])
+        self.assertEquals(list(Book.objects.using('other').values_list('title',flat=True)),
+                           [u'Dive into Python'])
 
-#        # When saved (no using required), new objects goes to 'other'
-#        chris.save()
-#        html5.save()
-#        self.assertEquals(list(Person.objects.using('default').values_list('name',flat=True)),
-#                          [u'Marty Alchin'])
-#        self.assertEquals(list(Person.objects.using('other').values_list('name',flat=True)),
-#                          [u'Chris Mills', u'Mark Pilgrim'])
-#        self.assertEquals(list(Book.objects.using('default').values_list('title',flat=True)),
-#                          [u'Pro Django'])
-#        self.assertEquals(list(Book.objects.using('other').values_list('title',flat=True)),
-#                          [u'Dive into HTML5', u'Dive into Python'])
+        # When saved (no using required), new objects goes to 'other'
+        chris.save()
+        html5.save()
+        self.assertEquals(list(Person.objects.using('default').values_list('name',flat=True)),
+                          [u'Marty Alchin'])
+        self.assertEquals(list(Person.objects.using('other').values_list('name',flat=True)),
+                          [u'Chris Mills', u'Mark Pilgrim'])
+        self.assertEquals(list(Book.objects.using('default').values_list('title',flat=True)),
+                          [u'Pro Django'])
+        self.assertEquals(list(Book.objects.using('other').values_list('title',flat=True)),
+                          [u'Dive into HTML5', u'Dive into Python'])
 
-#        # This also works if you assign the FK in the constructor
-#        water = Book(title="Dive into Water", published=datetime.date(2001, 1, 1), editor=mark)
-#        self.assertEquals(water._state.db, 'other')
-#        # ... but it isn't saved yet
-#        self.assertEquals(list(Book.objects.using('default').values_list('title',flat=True)),
-#                          [u'Pro Django'])
-#        self.assertEquals(list(Book.objects.using('other').values_list('title',flat=True)),
-#                          [u'Dive into HTML5', u'Dive into Python'])
+        # This also works if you assign the FK in the constructor
+        water = Book(title="Dive into Water", published=datetime.date(2001, 1, 1), editor=mark)
+        self.assertEquals(water._state.db, 'other')
+        # ... but it isn't saved yet
+        self.assertEquals(list(Book.objects.using('default').values_list('title',flat=True)),
+                          [u'Pro Django'])
+        self.assertEquals(list(Book.objects.using('other').values_list('title',flat=True)),
+                          [u'Dive into HTML5', u'Dive into Python'])
 
-#        # When saved, the new book goes to 'other'
-#        water.save()
-#        self.assertEquals(list(Book.objects.using('default').values_list('title',flat=True)),
-#                          [u'Pro Django'])
-#        self.assertEquals(list(Book.objects.using('other').values_list('title',flat=True)),
-#                          [u'Dive into HTML5', u'Dive into Python', u'Dive into Water'])
+        # When saved, the new book goes to 'other'
+        water.save()
+        self.assertEquals(list(Book.objects.using('default').values_list('title',flat=True)),
+                          [u'Pro Django'])
+        self.assertEquals(list(Book.objects.using('other').values_list('title',flat=True)),
+                          [u'Dive into HTML5', u'Dive into Python', u'Dive into Water'])
+
+    def test_foreign_key_deletion(self):
+        "Cascaded deletions of Foreign Key relations issue queries on the right database"
+        mark = Person.objects.using('other').create(name="Mark Pilgrim")
+        fido = Pet.objects.using('other').create(name="Fido", owner=mark)
+
+        # Check the initial state
+        self.assertEquals(Person.objects.using('default').count(), 0)
+        self.assertEquals(Pet.objects.using('default').count(), 0)
+
+        self.assertEquals(Person.objects.using('other').count(), 1)
+        self.assertEquals(Pet.objects.using('other').count(), 1)
+
+        # Delete the person object, which will cascade onto the pet
+        mark.delete(using='other')
+
+        self.assertEquals(Person.objects.using('default').count(), 0)
+        self.assertEquals(Pet.objects.using('default').count(), 0)
+
+        # Both the pet and the person have been deleted from the right database
+        self.assertEquals(Person.objects.using('other').count(), 0)
+        self.assertEquals(Pet.objects.using('other').count(), 0)
+
+    def test_o2o_separation(self):
+        "OneToOne fields are constrained to a single database"
+        # Create a user and profile on the default database
+        alice = User.objects.db_manager('default').create_user('alice', 'alice@example.com')
+        alice_profile = UserProfile.objects.using('default').create(user=alice, flavor='chocolate')
+
+        # Create a user and profile on the other database
+        bob = User.objects.db_manager('other').create_user('bob', 'bob@example.com')
+        bob_profile = UserProfile.objects.using('other').create(user=bob, flavor='crunchy frog')
+
+        # Retrieve related objects; queries should be database constrained
+        alice = User.objects.using('default').get(username="alice")
+        self.assertEquals(alice.userprofile.flavor, "chocolate")
+
+        bob = User.objects.using('other').get(username="bob")
+        self.assertEquals(bob.userprofile.flavor, "crunchy frog")
+
+        # Check that queries work across joins
+        self.assertEquals(list(User.objects.using('default').filter(userprofile__flavor='chocolate').values_list('username', flat=True)),
+                          [u'alice'])
+        self.assertEquals(list(User.objects.using('other').filter(userprofile__flavor='chocolate').values_list('username', flat=True)),
+                          [])
+
+        self.assertEquals(list(User.objects.using('default').filter(userprofile__flavor='crunchy frog').values_list('username', flat=True)),
+                          [])
+        self.assertEquals(list(User.objects.using('other').filter(userprofile__flavor='crunchy frog').values_list('username', flat=True)),
+                          [u'bob'])
+
+        # Reget the objects to clear caches
+        alice_profile = UserProfile.objects.using('default').get(flavor='chocolate')
+        bob_profile = UserProfile.objects.using('other').get(flavor='crunchy frog')
+
+        # Retrive related object by descriptor. Related objects should be database-baound
+        self.assertEquals(alice_profile.user.username, 'alice')
+        self.assertEquals(bob_profile.user.username, 'bob')
+
+    def test_o2o_cross_database_protection(self):
+        "Operations that involve sharing FK objects across databases raise an error"
+        # Create a user and profile on the default database
+        alice = User.objects.db_manager('default').create_user('alice', 'alice@example.com')
+
+        # Create a user and profile on the other database
+        bob = User.objects.db_manager('other').create_user('bob', 'bob@example.com')
+
+        # Set a one-to-one relation with an object from a different database
+        alice_profile = UserProfile.objects.using('default').create(user=alice, flavor='chocolate')
+        try:
+            bob.userprofile = alice_profile
+            self.fail("Shouldn't be able to assign across databases")
+        except ValueError:
+            pass
+
+        # BUT! if you assign a FK object when the base object hasn't
+        # been saved yet, you implicitly assign the database for the
+        # base object.
+        bob_profile = UserProfile.objects.using('other').create(user=bob, flavor='crunchy frog')
+
+        new_bob_profile = UserProfile(flavor="spring surprise")
+
+        charlie = User(username='charlie',email='charlie@example.com')
+        charlie.set_unusable_password()
+
+        # initially, no db assigned
+        self.assertEquals(new_bob_profile._state.db, None)
+        self.assertEquals(charlie._state.db, None)
+
+        # old object comes from 'other', so the new object is set to use 'other'...
+        new_bob_profile.user = bob
+        charlie.userprofile = bob_profile
+        self.assertEquals(new_bob_profile._state.db, 'other')
+        self.assertEquals(charlie._state.db, 'other')
+
+        # ... but it isn't saved yet
+        self.assertEquals(list(User.objects.using('other').values_list('username',flat=True)),
+                          [u'bob'])
+        self.assertEquals(list(UserProfile.objects.using('other').values_list('flavor',flat=True)),
+                           [u'crunchy frog'])
+
+        # When saved (no using required), new objects goes to 'other'
+        charlie.save()
+        bob_profile.save()
+        new_bob_profile.save()
+        self.assertEquals(list(User.objects.using('default').values_list('username',flat=True)),
+                          [u'alice'])
+        self.assertEquals(list(User.objects.using('other').values_list('username',flat=True)),
+                          [u'bob', u'charlie'])
+        self.assertEquals(list(UserProfile.objects.using('default').values_list('flavor',flat=True)),
+                           [u'chocolate'])
+        self.assertEquals(list(UserProfile.objects.using('other').values_list('flavor',flat=True)),
+                           [u'crunchy frog', u'spring surprise'])
+
+        # This also works if you assign the O2O relation in the constructor
+        denise = User.objects.db_manager('other').create_user('denise','denise@example.com')
+        denise_profile = UserProfile(flavor="tofu", user=denise)
+
+        self.assertEquals(denise_profile._state.db, 'other')
+        # ... but it isn't saved yet
+        self.assertEquals(list(UserProfile.objects.using('default').values_list('flavor',flat=True)),
+                           [u'chocolate'])
+        self.assertEquals(list(UserProfile.objects.using('other').values_list('flavor',flat=True)),
+                           [u'crunchy frog', u'spring surprise'])
+
+        # When saved, the new profile goes to 'other'
+        denise_profile.save()
+        self.assertEquals(list(UserProfile.objects.using('default').values_list('flavor',flat=True)),
+                           [u'chocolate'])
+        self.assertEquals(list(UserProfile.objects.using('other').values_list('flavor',flat=True)),
+                           [u'crunchy frog', u'spring surprise', u'tofu'])
 
     def test_generic_key_separation(self):
         "Generic fields are constrained to a single database"
@@ -555,56 +760,79 @@ class QueryTestCase(TestCase):
         self.assertEquals(list(Review.objects.using('other').filter(object_id=dive.pk).values_list('source', flat=True)),
                           [u'Python Daily'])
 
-#    def test_generic_key_cross_database_protection(self):
-##        "Operations that involve sharing FK objects across databases raise an error"
-##        # Create a book and author on the default database
-##        pro = Book.objects.create(title="Pro Django",
-##                                  published=datetime.date(2008, 12, 16))
+    def test_generic_key_cross_database_protection(self):
+        "Operations that involve sharing generic key objects across databases raise an error"
+        # Create a book and author on the default database
+        pro = Book.objects.create(title="Pro Django",
+                                  published=datetime.date(2008, 12, 16))
 
-##        review1 = Review.objects.create(source="Python Monthly", content_object=pro)
+        review1 = Review.objects.create(source="Python Monthly", content_object=pro)
 
-##        # Create a book and author on the other database
-##        dive = Book.objects.using('other').create(title="Dive into Python",
-##                                                  published=datetime.date(2009, 5, 4))
+        # Create a book and author on the other database
+        dive = Book.objects.using('other').create(title="Dive into Python",
+                                                  published=datetime.date(2009, 5, 4))
 
-##        review2 = Review.objects.using('other').create(source="Python Weekly", content_object=dive)
+        review2 = Review.objects.using('other').create(source="Python Weekly", content_object=dive)
 
-##        # Set a foreign key with an object from a different database
-##        try:
-##            review1.content_object = dive
-##            self.fail("Shouldn't be able to assign across databases")
-##        except ValueError:
-##            pass
+        # Set a foreign key with an object from a different database
+        try:
+            review1.content_object = dive
+            self.fail("Shouldn't be able to assign across databases")
+        except ValueError:
+            pass
 
-#        # Add to a foreign key set with an object from a different database
-#        try:
-#            dive.reviews.add(review1)
-#            self.fail("Shouldn't be able to assign across databases")
-#        except ValueError:
-#            pass
+        # Add to a foreign key set with an object from a different database
+        try:
+            dive.reviews.add(review1)
+            self.fail("Shouldn't be able to assign across databases")
+        except ValueError:
+            pass
 
-#        # BUT! if you assign a FK object when the base object hasn't
-#        # been saved yet, you implicitly assign the database for the
-#        # base object.
-#        review3 = Review(source="Python Daily")
-#        # initially, no db assigned
-#        self.assertEquals(review3._state.db, None)
+        # BUT! if you assign a FK object when the base object hasn't
+        # been saved yet, you implicitly assign the database for the
+        # base object.
+        review3 = Review(source="Python Daily")
+        # initially, no db assigned
+        self.assertEquals(review3._state.db, None)
 
-#        # Dive comes from 'other', so review3 is set to use 'other'...
-#        review3.content_object = dive
-#        self.assertEquals(review3._state.db, 'other')
-#        # ... but it isn't saved yet
-#        self.assertEquals(list(Review.objects.using('default').filter(object_id=pro.pk).values_list('source', flat=True)),
-#                          [u'Python Monthly'])
-#        self.assertEquals(list(Review.objects.using('other').filter(object_id=dive.pk).values_list('source',flat=True)),
-#                          [u'Python Weekly'])
+        # Dive comes from 'other', so review3 is set to use 'other'...
+        review3.content_object = dive
+        self.assertEquals(review3._state.db, 'other')
+        # ... but it isn't saved yet
+        self.assertEquals(list(Review.objects.using('default').filter(object_id=pro.pk).values_list('source', flat=True)),
+                          [u'Python Monthly'])
+        self.assertEquals(list(Review.objects.using('other').filter(object_id=dive.pk).values_list('source',flat=True)),
+                          [u'Python Weekly'])
 
-#        # When saved, John goes to 'other'
-#        review3.save()
-#        self.assertEquals(list(Review.objects.using('default').filter(object_id=pro.pk).values_list('source', flat=True)),
-#                          [u'Python Monthly'])
-#        self.assertEquals(list(Review.objects.using('other').filter(object_id=dive.pk).values_list('source',flat=True)),
-#                          [u'Python Daily', u'Python Weekly'])
+        # When saved, John goes to 'other'
+        review3.save()
+        self.assertEquals(list(Review.objects.using('default').filter(object_id=pro.pk).values_list('source', flat=True)),
+                          [u'Python Monthly'])
+        self.assertEquals(list(Review.objects.using('other').filter(object_id=dive.pk).values_list('source',flat=True)),
+                          [u'Python Daily', u'Python Weekly'])
+
+    def test_generic_key_deletion(self):
+        "Cascaded deletions of Generic Key relations issue queries on the right database"
+        dive = Book.objects.using('other').create(title="Dive into Python",
+                                                  published=datetime.date(2009, 5, 4))
+        review = Review.objects.using('other').create(source="Python Weekly", content_object=dive)
+
+        # Check the initial state
+        self.assertEquals(Book.objects.using('default').count(), 0)
+        self.assertEquals(Review.objects.using('default').count(), 0)
+
+        self.assertEquals(Book.objects.using('other').count(), 1)
+        self.assertEquals(Review.objects.using('other').count(), 1)
+
+        # Delete the Book object, which will cascade onto the pet
+        dive.delete(using='other')
+
+        self.assertEquals(Book.objects.using('default').count(), 0)
+        self.assertEquals(Review.objects.using('default').count(), 0)
+
+        # Both the pet and the person have been deleted from the right database
+        self.assertEquals(Book.objects.using('other').count(), 0)
+        self.assertEquals(Review.objects.using('other').count(), 0)
 
     def test_ordering(self):
         "get_next_by_XXX commands stick to a single database"
@@ -630,6 +858,694 @@ class QueryTestCase(TestCase):
         val = Book.objects.raw('SELECT id FROM "multiple_database_book"').using('other')
         self.assertEqual(map(lambda o: o.pk, val), [dive.pk])
 
+    def test_select_related(self):
+        "Database assignment is retained if an object is retrieved with select_related()"
+        # Create a book and author on the other database
+        mark = Person.objects.using('other').create(name="Mark Pilgrim")
+        dive = Book.objects.using('other').create(title="Dive into Python",
+                                                  published=datetime.date(2009, 5, 4),
+                                                  editor=mark)
+
+        # Retrieve the Person using select_related()
+        book = Book.objects.using('other').select_related('editor').get(title="Dive into Python")
+
+        # The editor instance should have a db state
+        self.assertEqual(book.editor._state.db, 'other')
+
+    def test_subquery(self):
+        """Make sure as_sql works with subqueries and master/slave."""
+        sub = Person.objects.using('other').filter(name='fff')
+        qs = Book.objects.filter(editor__in=sub)
+
+        # When you call __str__ on the query object, it doesn't know about using
+        # so it falls back to the default. If the subquery explicitly uses a
+        # different database, an error should be raised.
+        self.assertRaises(ValueError, str, qs.query)
+
+        # Evaluating the query shouldn't work, either
+        try:
+            for obj in qs:
+                pass
+            self.fail('Iterating over query should raise ValueError')
+        except ValueError:
+            pass
+
+
+class TestRouter(object):
+    # A test router. The behaviour is vaguely master/slave, but the
+    # databases aren't assumed to propagate changes.
+    def db_for_read(self, model, instance=None, **hints):
+        if instance:
+            return instance._state.db or 'other'
+        return 'other'
+
+    def db_for_write(self, model, **hints):
+        return DEFAULT_DB_ALIAS
+
+    def allow_relation(self, obj1, obj2, **hints):
+        return obj1._state.db in ('default', 'other') and obj2._state.db in ('default', 'other')
+
+    def allow_syncdb(self, db, model):
+        return True
+
+class AuthRouter(object):
+    """A router to control all database operations on models in
+    the contrib.auth application"""
+
+    def db_for_read(self, model, **hints):
+        "Point all read operations on auth models to 'default'"
+        if model._meta.app_label == 'auth':
+            # We use default here to ensure we can tell the difference
+            # between a read request and a write request for Auth objects
+            return 'default'
+        return None
+
+    def db_for_write(self, model, **hints):
+        "Point all operations on auth models to 'other'"
+        if model._meta.app_label == 'auth':
+            return 'other'
+        return None
+
+    def allow_relation(self, obj1, obj2, **hints):
+        "Allow any relation if a model in Auth is involved"
+        if obj1._meta.app_label == 'auth' or obj2._meta.app_label == 'auth':
+            return True
+        return None
+
+    def allow_syncdb(self, db, model):
+        "Make sure the auth app only appears on the 'other' db"
+        if db == 'other':
+            return model._meta.app_label == 'auth'
+        elif model._meta.app_label == 'auth':
+            return False
+        return None
+
+class WriteRouter(object):
+    # A router that only expresses an opinion on writes
+    def db_for_write(self, model, **hints):
+        return 'writer'
+
+class RouterTestCase(TestCase):
+    multi_db = True
+
+    def setUp(self):
+        # Make the 'other' database appear to be a slave of the 'default'
+        self.old_routers = router.routers
+        router.routers = [TestRouter()]
+
+    def tearDown(self):
+        # Restore the 'other' database as an independent database
+        router.routers = self.old_routers
+
+    def test_db_selection(self):
+        "Check that querysets obey the router for db suggestions"
+        self.assertEquals(Book.objects.db, 'other')
+        self.assertEquals(Book.objects.all().db, 'other')
+
+        self.assertEquals(Book.objects.using('default').db, 'default')
+
+        self.assertEquals(Book.objects.db_manager('default').db, 'default')
+        self.assertEquals(Book.objects.db_manager('default').all().db, 'default')
+
+    def test_syncdb_selection(self):
+        "Synchronization behaviour is predicatable"
+
+        self.assertTrue(router.allow_syncdb('default', User))
+        self.assertTrue(router.allow_syncdb('default', Book))
+
+        self.assertTrue(router.allow_syncdb('other', User))
+        self.assertTrue(router.allow_syncdb('other', Book))
+
+        # Add the auth router to the chain.
+        # TestRouter is a universal synchronizer, so it should have no effect.
+        router.routers = [TestRouter(), AuthRouter()]
+
+        self.assertTrue(router.allow_syncdb('default', User))
+        self.assertTrue(router.allow_syncdb('default', Book))
+
+        self.assertTrue(router.allow_syncdb('other', User))
+        self.assertTrue(router.allow_syncdb('other', Book))
+
+        # Now check what happens if the router order is the other way around
+        router.routers = [AuthRouter(), TestRouter()]
+
+        self.assertFalse(router.allow_syncdb('default', User))
+        self.assertTrue(router.allow_syncdb('default', Book))
+
+        self.assertTrue(router.allow_syncdb('other', User))
+        self.assertFalse(router.allow_syncdb('other', Book))
+
+    def test_partial_router(self):
+        "A router can choose to implement a subset of methods"
+        dive = Book.objects.using('other').create(title="Dive into Python",
+                                                  published=datetime.date(2009, 5, 4))
+
+        # First check the baseline behaviour
+
+        self.assertEquals(router.db_for_read(User), 'other')
+        self.assertEquals(router.db_for_read(Book), 'other')
+
+        self.assertEquals(router.db_for_write(User), 'default')
+        self.assertEquals(router.db_for_write(Book), 'default')
+
+        self.assertTrue(router.allow_relation(dive, dive))
+
+        self.assertTrue(router.allow_syncdb('default', User))
+        self.assertTrue(router.allow_syncdb('default', Book))
+
+        router.routers = [WriteRouter(), AuthRouter(), TestRouter()]
+
+        self.assertEquals(router.db_for_read(User), 'default')
+        self.assertEquals(router.db_for_read(Book), 'other')
+
+        self.assertEquals(router.db_for_write(User), 'writer')
+        self.assertEquals(router.db_for_write(Book), 'writer')
+
+        self.assertTrue(router.allow_relation(dive, dive))
+
+        self.assertFalse(router.allow_syncdb('default', User))
+        self.assertTrue(router.allow_syncdb('default', Book))
+
+
+    def test_database_routing(self):
+        marty = Person.objects.using('default').create(name="Marty Alchin")
+        pro = Book.objects.using('default').create(title="Pro Django",
+                                                   published=datetime.date(2008, 12, 16),
+                                                   editor=marty)
+        pro.authors = [marty]
+
+        # Create a book and author on the other database
+        dive = Book.objects.using('other').create(title="Dive into Python",
+                                                  published=datetime.date(2009, 5, 4))
+
+        # An update query will be routed to the default database
+        Book.objects.filter(title='Pro Django').update(pages=200)
+
+        try:
+            # By default, the get query will be directed to 'other'
+            Book.objects.get(title='Pro Django')
+            self.fail("Shouldn't be able to find the book")
+        except Book.DoesNotExist:
+            pass
+
+        # But the same query issued explicitly at a database will work.
+        pro = Book.objects.using('default').get(title='Pro Django')
+
+        # Check that the update worked.
+        self.assertEquals(pro.pages, 200)
+
+        # An update query with an explicit using clause will be routed
+        # to the requested database.
+        Book.objects.using('other').filter(title='Dive into Python').update(pages=300)
+        self.assertEquals(Book.objects.get(title='Dive into Python').pages, 300)
+
+        # Related object queries stick to the same database
+        # as the original object, regardless of the router
+        self.assertEquals(list(pro.authors.values_list('name', flat=True)), [u'Marty Alchin'])
+        self.assertEquals(pro.editor.name, u'Marty Alchin')
+
+        # get_or_create is a special case. The get needs to be targetted at
+        # the write database in order to avoid potential transaction
+        # consistency problems
+        book, created = Book.objects.get_or_create(title="Pro Django")
+        self.assertFalse(created)
+
+        book, created = Book.objects.get_or_create(title="Dive Into Python",
+                                                   defaults={'published':datetime.date(2009, 5, 4)})
+        self.assertTrue(created)
+
+        # Check the head count of objects
+        self.assertEquals(Book.objects.using('default').count(), 2)
+        self.assertEquals(Book.objects.using('other').count(), 1)
+        # If a database isn't specified, the read database is used
+        self.assertEquals(Book.objects.count(), 1)
+
+        # A delete query will also be routed to the default database
+        Book.objects.filter(pages__gt=150).delete()
+
+        # The default database has lost the book.
+        self.assertEquals(Book.objects.using('default').count(), 1)
+        self.assertEquals(Book.objects.using('other').count(), 1)
+
+    def test_foreign_key_cross_database_protection(self):
+        "Foreign keys can cross databases if they two databases have a common source"
+        # Create a book and author on the default database
+        pro = Book.objects.using('default').create(title="Pro Django",
+                                                   published=datetime.date(2008, 12, 16))
+
+        marty = Person.objects.using('default').create(name="Marty Alchin")
+
+        # Create a book and author on the other database
+        dive = Book.objects.using('other').create(title="Dive into Python",
+                                                  published=datetime.date(2009, 5, 4))
+
+        mark = Person.objects.using('other').create(name="Mark Pilgrim")
+
+        # Set a foreign key with an object from a different database
+        try:
+            dive.editor = marty
+        except ValueError:
+            self.fail("Assignment across master/slave databases with a common source should be ok")
+
+        # Database assignments of original objects haven't changed...
+        self.assertEquals(marty._state.db, 'default')
+        self.assertEquals(pro._state.db, 'default')
+        self.assertEquals(dive._state.db, 'other')
+        self.assertEquals(mark._state.db, 'other')
+
+        # ... but they will when the affected object is saved.
+        dive.save()
+        self.assertEquals(dive._state.db, 'default')
+
+        # ...and the source database now has a copy of any object saved
+        try:
+            Book.objects.using('default').get(title='Dive into Python').delete()
+        except Book.DoesNotExist:
+            self.fail('Source database should have a copy of saved object')
+
+        # This isn't a real master-slave database, so restore the original from other
+        dive = Book.objects.using('other').get(title='Dive into Python')
+        self.assertEquals(dive._state.db, 'other')
+
+        # Set a foreign key set with an object from a different database
+        try:
+            marty.edited = [pro, dive]
+        except ValueError:
+            self.fail("Assignment across master/slave databases with a common source should be ok")
+
+        # Assignment implies a save, so database assignments of original objects have changed...
+        self.assertEquals(marty._state.db, 'default')
+        self.assertEquals(pro._state.db, 'default')
+        self.assertEquals(dive._state.db, 'default')
+        self.assertEquals(mark._state.db, 'other')
+
+        # ...and the source database now has a copy of any object saved
+        try:
+            Book.objects.using('default').get(title='Dive into Python').delete()
+        except Book.DoesNotExist:
+            self.fail('Source database should have a copy of saved object')
+
+        # This isn't a real master-slave database, so restore the original from other
+        dive = Book.objects.using('other').get(title='Dive into Python')
+        self.assertEquals(dive._state.db, 'other')
+
+        # Add to a foreign key set with an object from a different database
+        try:
+            marty.edited.add(dive)
+        except ValueError:
+            self.fail("Assignment across master/slave databases with a common source should be ok")
+
+        # Add implies a save, so database assignments of original objects have changed...
+        self.assertEquals(marty._state.db, 'default')
+        self.assertEquals(pro._state.db, 'default')
+        self.assertEquals(dive._state.db, 'default')
+        self.assertEquals(mark._state.db, 'other')
+
+        # ...and the source database now has a copy of any object saved
+        try:
+            Book.objects.using('default').get(title='Dive into Python').delete()
+        except Book.DoesNotExist:
+            self.fail('Source database should have a copy of saved object')
+
+        # This isn't a real master-slave database, so restore the original from other
+        dive = Book.objects.using('other').get(title='Dive into Python')
+
+        # If you assign a FK object when the base object hasn't
+        # been saved yet, you implicitly assign the database for the
+        # base object.
+        chris = Person(name="Chris Mills")
+        html5 = Book(title="Dive into HTML5", published=datetime.date(2010, 3, 15))
+        # initially, no db assigned
+        self.assertEquals(chris._state.db, None)
+        self.assertEquals(html5._state.db, None)
+
+        # old object comes from 'other', so the new object is set to use the
+        # source of 'other'...
+        self.assertEquals(dive._state.db, 'other')
+        dive.editor = chris
+        html5.editor = mark
+
+        self.assertEquals(dive._state.db, 'other')
+        self.assertEquals(mark._state.db, 'other')
+        self.assertEquals(chris._state.db, 'default')
+        self.assertEquals(html5._state.db, 'default')
+
+        # This also works if you assign the FK in the constructor
+        water = Book(title="Dive into Water", published=datetime.date(2001, 1, 1), editor=mark)
+        self.assertEquals(water._state.db, 'default')
+
+        # If you create an object through a FK relation, it will be
+        # written to the write database, even if the original object
+        # was on the read database
+        cheesecake = mark.edited.create(title='Dive into Cheesecake', published=datetime.date(2010, 3, 15))
+        self.assertEquals(cheesecake._state.db, 'default')
+
+        # Same goes for get_or_create, regardless of whether getting or creating
+        cheesecake, created = mark.edited.get_or_create(title='Dive into Cheesecake', published=datetime.date(2010, 3, 15))
+        self.assertEquals(cheesecake._state.db, 'default')
+
+        puddles, created = mark.edited.get_or_create(title='Dive into Puddles', published=datetime.date(2010, 3, 15))
+        self.assertEquals(puddles._state.db, 'default')
+
+    def test_m2m_cross_database_protection(self):
+        "M2M relations can cross databases if the database share a source"
+        # Create books and authors on the inverse to the usual database
+        pro = Book.objects.using('other').create(pk=1, title="Pro Django",
+                                                 published=datetime.date(2008, 12, 16))
+
+        marty = Person.objects.using('other').create(pk=1, name="Marty Alchin")
+
+        dive = Book.objects.using('default').create(pk=2, title="Dive into Python",
+                                                    published=datetime.date(2009, 5, 4))
+
+        mark = Person.objects.using('default').create(pk=2, name="Mark Pilgrim")
+
+        # Now save back onto the usual databse.
+        # This simulates master/slave - the objects exist on both database,
+        # but the _state.db is as it is for all other tests.
+        pro.save(using='default')
+        marty.save(using='default')
+        dive.save(using='other')
+        mark.save(using='other')
+
+        # Check that we have 2 of both types of object on both databases
+        self.assertEquals(Book.objects.using('default').count(), 2)
+        self.assertEquals(Book.objects.using('other').count(), 2)
+        self.assertEquals(Person.objects.using('default').count(), 2)
+        self.assertEquals(Person.objects.using('other').count(), 2)
+
+        # Set a m2m set with an object from a different database
+        try:
+            marty.book_set = [pro, dive]
+        except ValueError:
+            self.fail("Assignment across master/slave databases with a common source should be ok")
+
+        # Database assignments don't change
+        self.assertEquals(marty._state.db, 'default')
+        self.assertEquals(pro._state.db, 'default')
+        self.assertEquals(dive._state.db, 'other')
+        self.assertEquals(mark._state.db, 'other')
+
+        # All m2m relations should be saved on the default database
+        self.assertEquals(Book.authors.through.objects.using('default').count(), 2)
+        self.assertEquals(Book.authors.through.objects.using('other').count(), 0)
+
+        # Reset relations
+        Book.authors.through.objects.using('default').delete()
+
+        # Add to an m2m with an object from a different database
+        try:
+            marty.book_set.add(dive)
+        except ValueError:
+            self.fail("Assignment across master/slave databases with a common source should be ok")
+
+        # Database assignments don't change
+        self.assertEquals(marty._state.db, 'default')
+        self.assertEquals(pro._state.db, 'default')
+        self.assertEquals(dive._state.db, 'other')
+        self.assertEquals(mark._state.db, 'other')
+
+        # All m2m relations should be saved on the default database
+        self.assertEquals(Book.authors.through.objects.using('default').count(), 1)
+        self.assertEquals(Book.authors.through.objects.using('other').count(), 0)
+
+        # Reset relations
+        Book.authors.through.objects.using('default').delete()
+
+        # Set a reverse m2m with an object from a different database
+        try:
+            dive.authors = [mark, marty]
+        except ValueError:
+            self.fail("Assignment across master/slave databases with a common source should be ok")
+
+        # Database assignments don't change
+        self.assertEquals(marty._state.db, 'default')
+        self.assertEquals(pro._state.db, 'default')
+        self.assertEquals(dive._state.db, 'other')
+        self.assertEquals(mark._state.db, 'other')
+
+        # All m2m relations should be saved on the default database
+        self.assertEquals(Book.authors.through.objects.using('default').count(), 2)
+        self.assertEquals(Book.authors.through.objects.using('other').count(), 0)
+
+        # Reset relations
+        Book.authors.through.objects.using('default').delete()
+
+        self.assertEquals(Book.authors.through.objects.using('default').count(), 0)
+        self.assertEquals(Book.authors.through.objects.using('other').count(), 0)
+
+        # Add to a reverse m2m with an object from a different database
+        try:
+            dive.authors.add(marty)
+        except ValueError:
+            self.fail("Assignment across master/slave databases with a common source should be ok")
+
+        # Database assignments don't change
+        self.assertEquals(marty._state.db, 'default')
+        self.assertEquals(pro._state.db, 'default')
+        self.assertEquals(dive._state.db, 'other')
+        self.assertEquals(mark._state.db, 'other')
+
+        # All m2m relations should be saved on the default database
+        self.assertEquals(Book.authors.through.objects.using('default').count(), 1)
+        self.assertEquals(Book.authors.through.objects.using('other').count(), 0)
+
+        # If you create an object through a M2M relation, it will be
+        # written to the write database, even if the original object
+        # was on the read database
+        alice = dive.authors.create(name='Alice')
+        self.assertEquals(alice._state.db, 'default')
+
+        # Same goes for get_or_create, regardless of whether getting or creating
+        alice, created = dive.authors.get_or_create(name='Alice')
+        self.assertEquals(alice._state.db, 'default')
+
+        bob, created = dive.authors.get_or_create(name='Bob')
+        self.assertEquals(bob._state.db, 'default')
+
+    def test_o2o_cross_database_protection(self):
+        "Operations that involve sharing FK objects across databases raise an error"
+        # Create a user and profile on the default database
+        alice = User.objects.db_manager('default').create_user('alice', 'alice@example.com')
+
+        # Create a user and profile on the other database
+        bob = User.objects.db_manager('other').create_user('bob', 'bob@example.com')
+
+        # Set a one-to-one relation with an object from a different database
+        alice_profile = UserProfile.objects.create(user=alice, flavor='chocolate')
+        try:
+            bob.userprofile = alice_profile
+        except ValueError:
+            self.fail("Assignment across master/slave databases with a common source should be ok")
+
+        # Database assignments of original objects haven't changed...
+        self.assertEquals(alice._state.db, 'default')
+        self.assertEquals(alice_profile._state.db, 'default')
+        self.assertEquals(bob._state.db, 'other')
+
+        # ... but they will when the affected object is saved.
+        bob.save()
+        self.assertEquals(bob._state.db, 'default')
+
+    def test_generic_key_cross_database_protection(self):
+        "Generic Key operations can span databases if they share a source"
+        # Create a book and author on the default database
+        pro = Book.objects.using('default'
+                ).create(title="Pro Django", published=datetime.date(2008, 12, 16))
+
+        review1 = Review.objects.using('default'
+                    ).create(source="Python Monthly", content_object=pro)
+
+        # Create a book and author on the other database
+        dive = Book.objects.using('other'
+                ).create(title="Dive into Python", published=datetime.date(2009, 5, 4))
+
+        review2 = Review.objects.using('other'
+                    ).create(source="Python Weekly", content_object=dive)
+
+        # Set a generic foreign key with an object from a different database
+        try:
+            review1.content_object = dive
+        except ValueError:
+            self.fail("Assignment across master/slave databases with a common source should be ok")
+
+        # Database assignments of original objects haven't changed...
+        self.assertEquals(pro._state.db, 'default')
+        self.assertEquals(review1._state.db, 'default')
+        self.assertEquals(dive._state.db, 'other')
+        self.assertEquals(review2._state.db, 'other')
+
+        # ... but they will when the affected object is saved.
+        dive.save()
+        self.assertEquals(review1._state.db, 'default')
+        self.assertEquals(dive._state.db, 'default')
+
+        # ...and the source database now has a copy of any object saved
+        try:
+            Book.objects.using('default').get(title='Dive into Python').delete()
+        except Book.DoesNotExist:
+            self.fail('Source database should have a copy of saved object')
+
+        # This isn't a real master-slave database, so restore the original from other
+        dive = Book.objects.using('other').get(title='Dive into Python')
+        self.assertEquals(dive._state.db, 'other')
+
+        # Add to a generic foreign key set with an object from a different database
+        try:
+            dive.reviews.add(review1)
+        except ValueError:
+            self.fail("Assignment across master/slave databases with a common source should be ok")
+
+        # Database assignments of original objects haven't changed...
+        self.assertEquals(pro._state.db, 'default')
+        self.assertEquals(review1._state.db, 'default')
+        self.assertEquals(dive._state.db, 'other')
+        self.assertEquals(review2._state.db, 'other')
+
+        # ... but they will when the affected object is saved.
+        dive.save()
+        self.assertEquals(dive._state.db, 'default')
+
+        # ...and the source database now has a copy of any object saved
+        try:
+            Book.objects.using('default').get(title='Dive into Python').delete()
+        except Book.DoesNotExist:
+            self.fail('Source database should have a copy of saved object')
+
+        # BUT! if you assign a FK object when the base object hasn't
+        # been saved yet, you implicitly assign the database for the
+        # base object.
+        review3 = Review(source="Python Daily")
+        # initially, no db assigned
+        self.assertEquals(review3._state.db, None)
+
+        # Dive comes from 'other', so review3 is set to use the source of 'other'...
+        review3.content_object = dive
+        self.assertEquals(review3._state.db, 'default')
+
+        # If you create an object through a M2M relation, it will be
+        # written to the write database, even if the original object
+        # was on the read database
+        dive = Book.objects.using('other').get(title='Dive into Python')
+        nyt = dive.reviews.create(source="New York Times", content_object=dive)
+        self.assertEquals(nyt._state.db, 'default')
+
+    def test_m2m_managers(self):
+        "M2M relations are represented by managers, and can be controlled like managers"
+        pro = Book.objects.using('other').create(pk=1, title="Pro Django",
+                                                 published=datetime.date(2008, 12, 16))
+
+        marty = Person.objects.using('other').create(pk=1, name="Marty Alchin")
+        pro.authors = [marty]
+
+        self.assertEquals(pro.authors.db, 'other')
+        self.assertEquals(pro.authors.db_manager('default').db, 'default')
+        self.assertEquals(pro.authors.db_manager('default').all().db, 'default')
+
+        self.assertEquals(marty.book_set.db, 'other')
+        self.assertEquals(marty.book_set.db_manager('default').db, 'default')
+        self.assertEquals(marty.book_set.db_manager('default').all().db, 'default')
+
+    def test_foreign_key_managers(self):
+        "FK reverse relations are represented by managers, and can be controlled like managers"
+        marty = Person.objects.using('other').create(pk=1, name="Marty Alchin")
+        pro = Book.objects.using('other').create(pk=1, title="Pro Django",
+                                                 published=datetime.date(2008, 12, 16),
+                                                 editor=marty)
+
+        self.assertEquals(marty.edited.db, 'other')
+        self.assertEquals(marty.edited.db_manager('default').db, 'default')
+        self.assertEquals(marty.edited.db_manager('default').all().db, 'default')
+
+    def test_generic_key_managers(self):
+        "Generic key relations are represented by managers, and can be controlled like managers"
+        pro = Book.objects.using('other').create(title="Pro Django",
+                                                 published=datetime.date(2008, 12, 16))
+
+        review1 = Review.objects.using('other').create(source="Python Monthly",
+                                                       content_object=pro)
+
+        self.assertEquals(pro.reviews.db, 'other')
+        self.assertEquals(pro.reviews.db_manager('default').db, 'default')
+        self.assertEquals(pro.reviews.db_manager('default').all().db, 'default')
+
+    def test_subquery(self):
+        """Make sure as_sql works with subqueries and master/slave."""
+        # Create a book and author on the other database
+
+        mark = Person.objects.using('other').create(name="Mark Pilgrim")
+        dive = Book.objects.using('other').create(title="Dive into Python",
+                                                  published=datetime.date(2009, 5, 4),
+                                                  editor=mark)
+
+        sub = Person.objects.filter(name='Mark Pilgrim')
+        qs = Book.objects.filter(editor__in=sub)
+
+        # When you call __str__ on the query object, it doesn't know about using
+        # so it falls back to the default. Don't let routing instructions
+        # force the subquery to an incompatible database.
+        str(qs.query)
+
+        # If you evaluate the query, it should work, running on 'other'
+        self.assertEquals(list(qs.values_list('title', flat=True)), [u'Dive into Python'])
+
+class AuthTestCase(TestCase):
+    multi_db = True
+
+    def setUp(self):
+        # Make the 'other' database appear to be a slave of the 'default'
+        self.old_routers = router.routers
+        router.routers = [AuthRouter()]
+
+    def tearDown(self):
+        # Restore the 'other' database as an independent database
+        router.routers = self.old_routers
+
+    def test_auth_manager(self):
+        "The methods on the auth manager obey database hints"
+        # Create one user using default allocation policy
+        User.objects.create_user('alice', 'alice@example.com')
+
+        # Create another user, explicitly specifying the database
+        User.objects.db_manager('default').create_user('bob', 'bob@example.com')
+
+        # The second user only exists on the other database
+        alice = User.objects.using('other').get(username='alice')
+
+        self.assertEquals(alice.username, 'alice')
+        self.assertEquals(alice._state.db, 'other')
+
+        self.assertRaises(User.DoesNotExist, User.objects.using('default').get, username='alice')
+
+        # The second user only exists on the default database
+        bob = User.objects.using('default').get(username='bob')
+
+        self.assertEquals(bob.username, 'bob')
+        self.assertEquals(bob._state.db, 'default')
+
+        self.assertRaises(User.DoesNotExist, User.objects.using('other').get, username='bob')
+
+        # That is... there is one user on each database
+        self.assertEquals(User.objects.using('default').count(), 1)
+        self.assertEquals(User.objects.using('other').count(), 1)
+
+    def test_dumpdata(self):
+        "Check that dumpdata honors allow_syncdb restrictions on the router"
+        User.objects.create_user('alice', 'alice@example.com')
+        User.objects.db_manager('default').create_user('bob', 'bob@example.com')
+
+        # Check that dumping the default database doesn't try to include auth
+        # because allow_syncdb prohibits auth on default
+        new_io = StringIO()
+        management.call_command('dumpdata', 'auth', format='json', database='default', stdout=new_io)
+        command_output = new_io.getvalue().strip()
+        self.assertEqual(command_output, '[]')
+
+        # Check that dumping the other database does include auth
+        new_io = StringIO()
+        management.call_command('dumpdata', 'auth', format='json', database='other', stdout=new_io)
+        command_output = new_io.getvalue().strip()
+        self.assertTrue('"email": "alice@example.com",' in command_output)
 
 class UserProfileTestCase(TestCase):
     def setUp(self):
@@ -652,6 +1568,7 @@ class UserProfileTestCase(TestCase):
 
         self.assertEquals(alice.get_profile().flavor, 'chocolate')
         self.assertEquals(bob.get_profile().flavor, 'crunchy frog')
+
 
 class FixtureTestCase(TestCase):
     multi_db = True
@@ -693,7 +1610,6 @@ class FixtureTestCase(TestCase):
             Book.objects.using('other').get(title="The Definitive Guide to Django")
         except Book.DoesNotExist:
             self.fail('"The Definitive Guide to Django" should exist on both databases')
-
 
 class PickleQuerySetTestCase(TestCase):
     multi_db = True

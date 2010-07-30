@@ -72,3 +72,37 @@ class MediaExcludeInline(generic.GenericTabularInline):
 
 admin.site.register(EpisodeExclude, inlines=[MediaExcludeInline])
 
+#
+# Generic inline with unique_together
+#
+
+class PhoneNumber(models.Model):
+    content_type = models.ForeignKey(ContentType)
+    object_id = models.PositiveIntegerField()
+    content_object = generic.GenericForeignKey('content_type', 'object_id')
+    phone_number = models.CharField(max_length=30)
+
+    class Meta:
+        unique_together = (('content_type', 'object_id', 'phone_number',),)
+
+class Contact(models.Model):
+    name = models.CharField(max_length=50)
+    phone_numbers = generic.GenericRelation(PhoneNumber)
+
+class PhoneNumberInline(generic.GenericTabularInline):
+    model = PhoneNumber
+
+admin.site.register(Contact, inlines=[PhoneNumberInline])
+
+#
+# Generic inline with can_delete=False
+#
+
+class EpisodePermanent(Episode):
+    pass
+
+class MediaPermanentInline(generic.GenericTabularInline):
+    model = Media
+    can_delete = False
+
+admin.site.register(EpisodePermanent, inlines=[MediaPermanentInline])

@@ -25,8 +25,10 @@ return model instances:
 
 .. method:: Manager.raw(raw_query, params=None, translations=None)
 
-This method method takes a raw SQL query, executes it, and returns model
-instances.
+This method method takes a raw SQL query, executes it, and returns a
+:class:`~django.db.models.query.RawQuerySet` instance. This
+:class:`~django.db.models.query.RawQuerySet` instance can be iterated
+over just like an normal QuerySet to provide object instances.
 
 This is best illustrated with an example. Suppose you've got the following model::
 
@@ -37,8 +39,10 @@ This is best illustrated with an example. Suppose you've got the following model
 
 You could then execute custom SQL like so::
 
-    >>> Person.objects.raw('SELECT * from myapp_person')
-    [<Person: John Doe>, <Person: Jane Doe>, ...]
+    >>> for p in Person.objects.raw('SELECT * FROM myapp_person'):
+    ...     print p
+    John Smith
+    Jane Jones
 
 .. admonition:: Model table names
 
@@ -91,12 +95,26 @@ query could also be written::
     >>> name_map = {'first': 'first_name', 'last': 'last_name', 'bd': 'birth_date', 'pk': 'id'}
     >>> Person.objects.raw('SELECT * FROM some_other_table', translations=name_map)
 
+Index lookups
+-------------
+
+``raw()`` supports indexing, so if you need only the first result you can
+write::
+
+    >>> first_person = Person.objects.raw('SELECT * from myapp_person')[0]
+
+However, the indexing and slicing are not performed at the database level. If
+you have a big amount of ``Person`` objects in your database, it is more
+efficient to limit the query at the SQL level::
+
+    >>> first_person = Person.objects.raw('SELECT * from myapp_person LIMIT 1')[0]
+
 Deferring model fields
 ----------------------
 
 Fields may also be left out::
 
-    >>> people = Person.objects.raw('SELECT id, first_name FROM myapp_person'):
+    >>> people = Person.objects.raw('SELECT id, first_name FROM myapp_person')
 
 The ``Person`` objects returned by this query will be :ref:`deferred
 <queryset-defer>` model instances. This means that the fields that are omitted
@@ -128,7 +146,7 @@ of people with their ages calculated by the database::
 
     >>> people = Person.objects.raw('SELECT *, age(birth_date) AS age FROM myapp_person')
     >>> for p in people:
-    ...   print "%s is %s." % (p.first_name, p.age)
+    ...     print "%s is %s." % (p.first_name, p.age)
     John is 37.
     Jane is 42.
     ...
@@ -178,8 +196,8 @@ In these cases, you can always access the database directly, routing around
 the model layer entirely.
 
 The object ``django.db.connection`` represents the
-current database connection, and ``django.db.transaction`` represents the
-current database transaction. To use the database connection, call
+default database connection, and ``django.db.transaction`` represents the
+default database transaction. To use the database connection, call
 ``connection.cursor()`` to get a cursor object. Then, call
 ``cursor.execute(sql, [params])`` to execute the SQL and ``cursor.fetchone()``
 or ``cursor.fetchall()`` to return the resulting rows. After performing a data
@@ -201,6 +219,15 @@ is required. For example::
         row = cursor.fetchone()
 
         return row
+
+If you are using more than one database you can use
+``django.db.connections`` to obtain the connection (and cursor) for a
+specific database. ``django.db.connections`` is a dictionary-like
+object that allows you to retrieve a specific connection using it's
+alias::
+
+    from django.db import connections
+    cursor = connections['my_db_alias'].cursor()
 
 .. _transactions-and-raw-sql:
 
@@ -251,5 +278,4 @@ necessary. (Also note that Django expects the ``"%s"`` placeholder, *not* the
 ``"?"`` placeholder, which is used by the SQLite Python bindings. This is for
 the sake of consistency and sanity.)
 
-.. _Python DB-API: http://www.python.org/peps/pep-0249.html
-
+.. _Python DB-API: http://www.python.org/dev/peps/pep-0249/

@@ -4,6 +4,9 @@ PostgreSQL database backend for Django.
 Requires psycopg 2: http://initd.org/projects/psycopg2
 """
 
+import sys
+
+from django.db import utils
 from django.db.backends import *
 from django.db.backends.signals import connection_created
 from django.db.backends.postgresql.operations import DatabaseOperations as PostgresqlDatabaseOperations
@@ -26,6 +29,40 @@ IntegrityError = Database.IntegrityError
 psycopg2.extensions.register_type(psycopg2.extensions.UNICODE)
 psycopg2.extensions.register_adapter(SafeString, psycopg2.extensions.QuotedString)
 psycopg2.extensions.register_adapter(SafeUnicode, psycopg2.extensions.QuotedString)
+
+class CursorWrapper(object):
+    """
+    A thin wrapper around psycopg2's normal cursor class so that we can catch
+    particular exception instances and reraise them with the right types.
+    """
+
+    def __init__(self, cursor):
+        self.cursor = cursor
+
+    def execute(self, query, args=None):
+        try:
+            return self.cursor.execute(query, args)
+        except Database.IntegrityError, e:
+            raise utils.IntegrityError, utils.IntegrityError(*tuple(e)), sys.exc_info()[2]
+        except Database.DatabaseError, e:
+            raise utils.DatabaseError, utils.DatabaseError(*tuple(e)), sys.exc_info()[2]
+
+    def executemany(self, query, args):
+        try:
+            return self.cursor.executemany(query, args)
+        except Database.IntegrityError, e:
+            raise utils.IntegrityError, utils.IntegrityError(*tuple(e)), sys.exc_info()[2]
+        except Database.DatabaseError, e:
+            raise utils.DatabaseError, utils.DatabaseError(*tuple(e)), sys.exc_info()[2]
+
+    def __getattr__(self, attr):
+        if attr in self.__dict__:
+            return self.__dict__[attr]
+        else:
+            return getattr(self.cursor, attr)
+
+    def __iter__(self):
+        return iter(self.cursor)
 
 class DatabaseFeatures(BaseDatabaseFeatures):
     needs_datetime_string_cast = False
@@ -73,10 +110,12 @@ class DatabaseWrapper(BaseDatabaseWrapper):
         self.validation = BaseDatabaseValidation(self)
 
     def _cursor(self):
+        new_connection = False
         set_tz = False
         settings_dict = self.settings_dict
         if self.connection is None:
-            set_tz = True
+            new_connection = True
+            set_tz = settings_dict.get('TIME_ZONE')
             if settings_dict['NAME'] == '':
                 from django.core.exceptions import ImproperlyConfigured
                 raise ImproperlyConfigured("You need to specify NAME in your Django settings file.")
@@ -100,8 +139,9 @@ class DatabaseWrapper(BaseDatabaseWrapper):
             connection_created.send(sender=self.__class__)
         cursor = self.connection.cursor()
         cursor.tzinfo_factory = None
-        if set_tz:
-            cursor.execute("SET TIME ZONE %s", [settings_dict['TIME_ZONE']])
+        if new_connection:
+            if set_tz:
+                cursor.execute("SET TIME ZONE %s", [settings_dict['TIME_ZONE']])
             if not hasattr(self, '_version'):
                 self.__class__._version = get_version(cursor)
             if self._version[0:2] < (8, 0):
@@ -118,7 +158,7 @@ class DatabaseWrapper(BaseDatabaseWrapper):
                     # versions that support it, but, right now, that's hard to
                     # do without breaking other things (#10509).
                     self.features.can_return_id_from_insert = True
-        return cursor
+        return CursorWrapper(cursor)
 
     def _enter_transaction_management(self, managed):
         """

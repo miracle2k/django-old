@@ -2,11 +2,12 @@ from datetime import date
 
 from django import db
 from django import forms
-from django.forms.models import modelform_factory
+from django.forms.models import modelform_factory, ModelChoiceField
 from django.conf import settings
 from django.test import TestCase
 
-from models import Person, Triple, FilePathModel, Article, Publication, CustomFF
+from models import Person, RealPerson, Triple, FilePathModel, Article, Publication, CustomFF, Author, Author1
+
 
 class ModelMultipleChoiceFieldTests(TestCase):
 
@@ -49,6 +50,46 @@ class UniqueTogetherTests(TestCase):
 
         form = TripleForm({'left': '1', 'middle': '3', 'right': '1'})
         self.failUnless(form.is_valid())
+
+class TripleFormWithCleanOverride(forms.ModelForm):
+    class Meta:
+        model = Triple
+
+    def clean(self):
+        if not self.cleaned_data['left'] == self.cleaned_data['right']:
+            raise forms.ValidationError('Left and right should be equal')
+        return self.cleaned_data
+
+class OverrideCleanTests(TestCase):
+    def test_override_clean(self):
+        """
+        Regression for #12596: Calling super from ModelForm.clean() should be
+        optional.
+        """
+        form = TripleFormWithCleanOverride({'left': 1, 'middle': 2, 'right': 1})
+        self.failUnless(form.is_valid())
+        # form.instance.left will be None if the instance was not constructed
+        # by form.full_clean().
+        self.assertEquals(form.instance.left, 1)
+
+# Regression test for #12960.
+# Make sure the cleaned_data returned from ModelForm.clean() is applied to the
+# model instance.
+
+class PublicationForm(forms.ModelForm):
+    def clean(self):
+        self.cleaned_data['title'] = self.cleaned_data['title'].upper()
+        return self.cleaned_data
+
+    class Meta:
+        model = Publication
+
+class ModelFormCleanTest(TestCase):
+    def test_model_form_clean_applies_to_model(self):
+        data = {'title': 'test', 'date_published': '2010-2-25'}
+        form = PublicationForm(data)
+        publication = form.save()
+        self.assertEqual(publication.title, 'TEST')
 
 class FPForm(forms.ModelForm):
     class Meta:
@@ -96,7 +137,7 @@ class CFFForm(forms.ModelForm):
 class CustomFieldSaveTests(TestCase):
     def test_save(self):
         "Regression for #11149: save_form_data should be called only once"
-        
+
         # It's enough that the form saves without error -- the custom save routine will
         # generate an AssertionError if it is called more than once during save.
         form = CFFForm(data = {'f': None})
@@ -108,8 +149,70 @@ class ModelChoiceIteratorTests(TestCase):
             class Meta:
                 model = Article
                 fields = ["publications"]
-        
+
         Publication.objects.create(title="Pravda",
             date_published=date(1991, 8, 22))
         f = Form()
         self.assertEqual(len(f.fields["publications"].choices), 1)
+
+class RealPersonForm(forms.ModelForm):
+    class Meta:
+        model = RealPerson
+
+class CustomModelFormSaveMethod(TestCase):
+    def test_string_message(self):
+        data = {'name': 'anonymous'}
+        form = RealPersonForm(data)
+        self.assertEqual(form.is_valid(), False)
+        self.assertEqual(form.errors['__all__'], ['Please specify a real name.'])
+
+class ModelClassTests(TestCase):
+    def test_no_model_class(self):
+        class NoModelModelForm(forms.ModelForm):
+            pass
+        self.assertRaises(ValueError, NoModelModelForm)
+
+class OneToOneFieldTests(TestCase):
+    def test_assignment_of_none(self):
+        class AuthorForm(forms.ModelForm):
+            class Meta:
+                model = Author
+                fields = ['publication', 'full_name']
+
+        publication = Publication.objects.create(title="Pravda",
+            date_published=date(1991, 8, 22))
+        author = Author.objects.create(publication=publication, full_name='John Doe')
+        form = AuthorForm({'publication':u'', 'full_name':'John Doe'}, instance=author)
+        self.assert_(form.is_valid())
+        self.assertEqual(form.cleaned_data['publication'], None)
+        author = form.save()
+        # author object returned from form still retains original publication object
+        # that's why we need to retreive it from database again
+        new_author = Author.objects.get(pk=author.pk)
+        self.assertEqual(new_author.publication, None)
+
+    def test_assignment_of_none_null_false(self):
+        class AuthorForm(forms.ModelForm):
+            class Meta:
+                model = Author1
+                fields = ['publication', 'full_name']
+
+        publication = Publication.objects.create(title="Pravda",
+            date_published=date(1991, 8, 22))
+        author = Author1.objects.create(publication=publication, full_name='John Doe')
+        form = AuthorForm({'publication':u'', 'full_name':'John Doe'}, instance=author)
+        self.assert_(not form.is_valid())
+
+
+class ModelChoiceForm(forms.Form):
+    person = ModelChoiceField(Person.objects.all())
+
+
+class TestTicket11183(TestCase):
+    def test_11183(self):
+        form1 = ModelChoiceForm()
+        field1 = form1.fields['person']
+        # To allow the widget to change the queryset of field1.widget.choices correctly, 
+        # without affecting other forms, the following must hold:
+        self.assert_(field1 is not ModelChoiceForm.base_fields['person'])
+        self.assert_(field1.widget.choices.field is field1)

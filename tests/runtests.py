@@ -5,12 +5,6 @@ import unittest
 
 import django.contrib as contrib
 
-try:
-    set
-except NameError:
-    from sets import Set as set     # For Python 2.3
-
-
 CONTRIB_DIR_NAME = 'django.contrib'
 MODEL_TESTS_DIR_NAME = 'modeltests'
 REGRESSION_TESTS_DIR_NAME = 'regressiontests'
@@ -20,6 +14,8 @@ TEST_TEMPLATE_DIR = 'templates'
 CONTRIB_DIR = os.path.dirname(contrib.__file__)
 MODEL_TEST_DIR = os.path.join(os.path.dirname(__file__), MODEL_TESTS_DIR_NAME)
 REGRESSION_TEST_DIR = os.path.join(os.path.dirname(__file__), REGRESSION_TESTS_DIR_NAME)
+
+REGRESSION_SUBDIRS_TO_SKIP = ['locale']
 
 ALWAYS_INSTALLED_APPS = [
     'django.contrib.contenttypes',
@@ -37,7 +33,9 @@ def get_test_models():
     models = []
     for loc, dirpath in (MODEL_TESTS_DIR_NAME, MODEL_TEST_DIR), (REGRESSION_TESTS_DIR_NAME, REGRESSION_TEST_DIR), (CONTRIB_DIR_NAME, CONTRIB_DIR):
         for f in os.listdir(dirpath):
-            if f.startswith('__init__') or f.startswith('.') or f.startswith('sql') or f.startswith('invalid'):
+            if f.startswith('__init__') or f.startswith('.') or \
+               f.startswith('sql') or f.startswith('invalid') or \
+               os.path.basename(f) in REGRESSION_SUBDIRS_TO_SKIP:
                 continue
             models.append((loc, f))
     return models
@@ -156,13 +154,25 @@ def django_tests(verbosity, interactive, failfast, test_labels):
     # Run the test suite, including the extra validation tests.
     from django.test.utils import get_runner
     if not hasattr(settings, 'TEST_RUNNER'):
-        settings.TEST_RUNNER = 'django.test.simple.run_tests'
-    test_runner = get_runner(settings)
+        settings.TEST_RUNNER = 'django.test.simple.DjangoTestSuiteRunner'
+    TestRunner = get_runner(settings)
 
-    failures = test_runner(test_labels, verbosity=verbosity, interactive=interactive, failfast=failfast,
-                           extra_tests=extra_tests)
+    if hasattr(TestRunner, 'func_name'):
+        # Pre 1.2 test runners were just functions,
+        # and did not support the 'failfast' option.
+        import warnings
+        warnings.warn(
+            'Function-based test runners are deprecated. Test runners should be classes with a run_tests() method.',
+            PendingDeprecationWarning
+        )
+        failures = TestRunner(test_labels, verbosity=verbosity, interactive=interactive,
+            extra_tests=extra_tests)
+    else:
+        test_runner = TestRunner(verbosity=verbosity, interactive=interactive, failfast=failfast)
+        failures = test_runner.run_tests(test_labels, extra_tests=extra_tests)
+
     if failures:
-        sys.exit(failures)
+        sys.exit(bool(failures))
 
     # Restore the old settings.
     settings.INSTALLED_APPS = old_installed_apps

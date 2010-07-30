@@ -4,7 +4,7 @@ from django.contrib.gis.db.models import Collect, Count, Extent, F, Union
 from django.contrib.gis.geometry.backend import Geometry
 from django.contrib.gis.tests.utils import mysql, oracle, postgis, spatialite, no_mysql, no_oracle, no_spatialite
 from django.conf import settings
-from models import City, Location, DirectoryEntry, Parcel, Book, Author
+from models import City, Location, DirectoryEntry, Parcel, Book, Author, Article
 
 cities = (('Aurora', 'TX', -97.516111, 33.058333),
           ('Roswell', 'NM', -104.528056, 33.387222),
@@ -19,7 +19,6 @@ class RelatedGeoModelTest(unittest.TestCase):
             loc = Location.objects.create(point=Point(lon, lat))
             c = City.objects.create(name=name, state=state, location=loc)
 
-    @no_oracle # TODO: Fix select_related() problems w/Oracle and pagination.
     def test02_select_related(self):
         "Testing `select_related` on geographic models (see #7126)."
         qs1 = City.objects.all()
@@ -34,7 +33,6 @@ class RelatedGeoModelTest(unittest.TestCase):
                 self.assertEqual(Point(lon, lat), c.location.point)
 
     @no_mysql
-    @no_oracle # Pagination problem is implicated in this test as well.
     def test03_transform_related(self):
         "Testing the `transform` GeoQuerySet method on related geographic models."
         # All the transformations are to state plane coordinate systems using
@@ -293,6 +291,14 @@ class RelatedGeoModelTest(unittest.TestCase):
             self.assertEqual(4, len(coll))
             self.assertEqual(ref_geom, coll)
 
+    def test15_invalid_select_related(self):
+        "Testing doing select_related on the related name manager of a unique FK. See #13934."
+        qs = Article.objects.select_related('author__article')
+        # This triggers TypeError when `get_default_columns` has no `local_only`
+        # keyword.  The TypeError is swallowed if QuerySet is actually
+        # evaluated as list generation swallows TypeError in CPython.
+        sql = str(qs.query)
+        
     # TODO: Related tests for KML, GML, and distance lookups.
 
 def suite():

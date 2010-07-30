@@ -7,8 +7,8 @@ from django.db.backends.sqlite3.base import DatabaseWrapper as SqliteDatabaseWra
     _sqlite_extract, _sqlite_date_trunc, _sqlite_regexp
 from django.contrib.gis.db.backends.spatialite.client import SpatiaLiteClient
 from django.contrib.gis.db.backends.spatialite.creation import SpatiaLiteCreation
+from django.contrib.gis.db.backends.spatialite.introspection import SpatiaLiteIntrospection
 from django.contrib.gis.db.backends.spatialite.operations import SpatiaLiteOperations
-
 
 class DatabaseWrapper(SqliteDatabaseWrapper):
     def __init__(self, *args, **kwargs):
@@ -33,13 +33,14 @@ class DatabaseWrapper(SqliteDatabaseWrapper):
         self.ops = SpatiaLiteOperations(self)
         self.client = SpatiaLiteClient(self)
         self.creation = SpatiaLiteCreation(self)
+        self.introspection = SpatiaLiteIntrospection(self)
 
     def _cursor(self):
         if self.connection is None:
+            ## The following is the same as in django.db.backends.sqlite3.base ##
             settings_dict = self.settings_dict
             if not settings_dict['NAME']:
-                from django.core.exceptions import ImproperlyConfigured
-                raise ImproperlyConfigured, "Please fill out the database NAME in the settings module before using the database."
+                raise ImproperlyConfigured("Please fill out the database NAME in the settings module before using the database.")
             kwargs = {
                 'database': settings_dict['NAME'],
                 'detect_types': Database.PARSE_DECLTYPES | Database.PARSE_COLNAMES,
@@ -50,7 +51,11 @@ class DatabaseWrapper(SqliteDatabaseWrapper):
             self.connection.create_function("django_extract", 2, _sqlite_extract)
             self.connection.create_function("django_date_trunc", 2, _sqlite_date_trunc)
             self.connection.create_function("regexp", 2, _sqlite_regexp)
+            connection_created.send(sender=self.__class__)
 
+            ## From here on, customized for GeoDjango ##
+
+            # Enabling extension loading on the SQLite connection.
             try:
                 self.connection.enable_load_extension(True)
             except AttributeError:
@@ -59,15 +64,14 @@ class DatabaseWrapper(SqliteDatabaseWrapper):
                                            'the loading of extensions to use SpatiaLite.'
                                            )
 
-            connection_created.send(sender=self.__class__)
-        return self.connection.cursor(factory=SQLiteCursorWrapper)
-
-    def load_spatialite(self):
-        """
-        Loads the SpatiaLite library.
-        """
-        try:
-            self._cursor().execute("SELECT load_extension(%s)", (self.spatialite_lib,))
-        except Exception, msg:
-            raise ImproperlyConfigured('Unable to load the SpatiaLite extension '
-                                       '"%s" because: %s' % (self.spatialite_lib, msg))
+            # Loading the SpatiaLite library extension on the connection, and returning
+            # the created cursor.
+            cur = self.connection.cursor(factory=SQLiteCursorWrapper)
+            try:
+                cur.execute("SELECT load_extension(%s)", (self.spatialite_lib,))
+            except Exception, msg:
+                raise ImproperlyConfigured('Unable to load the SpatiaLite library extension '
+                                           '"%s" because: %s' % (self.spatialite_lib, msg))
+            return cur
+        else:
+            return self.connection.cursor(factory=SQLiteCursorWrapper)

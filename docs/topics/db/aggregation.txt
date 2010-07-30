@@ -1,14 +1,14 @@
 .. _topics-db-aggregation:
 
-=============
- Aggregation
-=============
+===========
+Aggregation
+===========
 
 .. versionadded:: 1.1
 
 .. currentmodule:: django.db.models
 
-The topic guide on :ref:`Django's database-abstraction API <topics-db-queries`
+The topic guide on :ref:`Django's database-abstraction API <topics-db-queries>`
 described the way that you can use Django queries that create,
 retrieve, update and delete individual objects. However, sometimes you will
 need to retrieve values that are derived by summarizing or *aggregating* a
@@ -96,7 +96,7 @@ Generating aggregates for each item in a QuerySet
 =================================================
 
 The second way to generate summary values is to generate an independent
-summary for each object in a ``Queryset``. For example, if you are retrieving
+summary for each object in a ``QuerySet``. For example, if you are retrieving
 a list of books, you may want to know how many authors contributed to
 each book. Each Book has a many-to-many relationship with the Author; we
 want to summarize this relationship for each book in the ``QuerySet``.
@@ -257,7 +257,7 @@ that have contributed to the book, you could use the following query::
 
 Ordinarily, annotations are generated on a per-object basis - an annotated
 ``QuerySet`` will return one result for each object in the original
-``Queryset``. However, when a ``values()`` clause is used to constrain the
+``QuerySet``. However, when a ``values()`` clause is used to constrain the
 columns that are returned in the result set, the method for evaluating
 annotations is slightly different. Instead of returning an annotated result
 for each result in the original ``QuerySet``, the original results are
@@ -353,7 +353,7 @@ without any harmful effects, since that is already playing a role in the
 query.
 
 This behavior is the same as that noted in the queryset documentation for
-:ref:`distinct() <querysets-distinct>` and the general rule is the same:
+:ref:`distinct() <queryset-distinct>` and the general rule is the same:
 normally you won't want extra columns playing a part in the result, so clear
 out the ordering, or at least make sure it's restricted only to those fields
 you also select in a ``values()`` call.

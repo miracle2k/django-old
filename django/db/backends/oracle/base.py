@@ -4,13 +4,12 @@ Oracle database backend for Django.
 Requires cx_Oracle: http://cx-oracle.sourceforge.net/
 """
 
-import os
+
 import datetime
+import os
+import sys
 import time
-try:
-    from decimal import Decimal
-except ImportError:
-    from django.utils._decimal import Decimal
+from decimal import Decimal
 
 # Oracle takes client-side character set encoding from the environment.
 os.environ['NLS_LANG'] = '.UTF8'
@@ -24,6 +23,7 @@ except ImportError, e:
     from django.core.exceptions import ImproperlyConfigured
     raise ImproperlyConfigured("Error loading cx_Oracle module: %s" % e)
 
+from django.db import utils
 from django.db.backends import *
 from django.db.backends.signals import connection_created
 from django.db.backends.oracle.client import DatabaseClient
@@ -49,6 +49,7 @@ class DatabaseFeatures(BaseDatabaseFeatures):
     interprets_empty_strings_as_nulls = True
     uses_savepoints = True
     can_return_id_from_insert = True
+    allow_sliced_subqueries = False
 
 
 class DatabaseOperations(BaseDatabaseOperations):
@@ -314,16 +315,16 @@ class DatabaseWrapper(BaseDatabaseWrapper):
     operators = {
         'exact': '= %s',
         'iexact': '= UPPER(%s)',
-        'contains': "LIKEC %s ESCAPE '\\'",
-        'icontains': "LIKEC UPPER(%s) ESCAPE '\\'",
+        'contains': "LIKE TRANSLATE(%s USING NCHAR_CS) ESCAPE TRANSLATE('\\' USING NCHAR_CS)",
+        'icontains': "LIKE UPPER(TRANSLATE(%s USING NCHAR_CS)) ESCAPE TRANSLATE('\\' USING NCHAR_CS)",
         'gt': '> %s',
         'gte': '>= %s',
         'lt': '< %s',
         'lte': '<= %s',
-        'startswith': "LIKEC %s ESCAPE '\\'",
-        'endswith': "LIKEC %s ESCAPE '\\'",
-        'istartswith': "LIKEC UPPER(%s) ESCAPE '\\'",
-        'iendswith': "LIKEC UPPER(%s) ESCAPE '\\'",
+        'startswith': "LIKE TRANSLATE(%s USING NCHAR_CS) ESCAPE TRANSLATE('\\' USING NCHAR_CS)",
+        'endswith': "LIKE TRANSLATE(%s USING NCHAR_CS) ESCAPE TRANSLATE('\\' USING NCHAR_CS)",
+        'istartswith': "LIKE UPPER(TRANSLATE(%s USING NCHAR_CS)) ESCAPE TRANSLATE('\\' USING NCHAR_CS)",
+        'iendswith': "LIKE UPPER(TRANSLATE(%s USING NCHAR_CS)) ESCAPE TRANSLATE('\\' USING NCHAR_CS)",
     }
     oracle_version = None
 
@@ -419,6 +420,30 @@ class OracleParam(object):
             self.input_size = None
 
 
+class VariableWrapper(object):
+    """
+    An adapter class for cursor variables that prevents the wrapped object
+    from being converted into a string when used to instanciate an OracleParam.
+    This can be used generally for any other object that should be passed into
+    Cursor.execute as-is.
+    """
+
+    def __init__(self, var):
+        self.var = var
+
+    def bind_parameter(self, cursor):
+        return self.var
+
+    def __getattr__(self, key):
+        return getattr(self.var, key)
+
+    def __setattr__(self, key, value):
+        if key == 'var':
+            self.__dict__[key] = value
+        else:
+            setattr(self.var, key, value)
+
+
 class InsertIdVar(object):
     """
     A late-binding cursor variable that can be passed to Cursor.execute
@@ -427,7 +452,7 @@ class InsertIdVar(object):
     """
 
     def bind_parameter(self, cursor):
-        param = cursor.var(Database.NUMBER)
+        param = cursor.cursor.var(Database.NUMBER)
         cursor._insert_id_var = param
         return param
 
@@ -480,11 +505,13 @@ class FormatStylePlaceholderCursor(object):
         self._guess_input_sizes([params])
         try:
             return self.cursor.execute(query, self._param_generator(params))
-        except DatabaseError, e:
+        except Database.IntegrityError, e:
+            raise utils.IntegrityError, utils.IntegrityError(*tuple(e)), sys.exc_info()[2]
+        except Database.DatabaseError, e:
             # cx_Oracle <= 4.4.0 wrongly raises a DatabaseError for ORA-01400.
-            if e.args[0].code == 1400 and not isinstance(e, IntegrityError):
-                e = IntegrityError(e.args[0])
-            raise e
+            if hasattr(e.args[0], 'code') and e.args[0].code == 1400 and not isinstance(e, IntegrityError):
+                raise utils.IntegrityError, utils.IntegrityError(*tuple(e)), sys.exc_info()[2]
+            raise utils.DatabaseError, utils.DatabaseError(*tuple(e)), sys.exc_info()[2]
 
     def executemany(self, query, params=None):
         try:
@@ -504,67 +531,35 @@ class FormatStylePlaceholderCursor(object):
         try:
             return self.cursor.executemany(query,
                                 [self._param_generator(p) for p in formatted])
-        except DatabaseError, e:
+        except Database.IntegrityError, e:
+            raise utils.IntegrityError, utils.IntegrityError(*tuple(e)), sys.exc_info()[2]
+        except Database.DatabaseError, e:
             # cx_Oracle <= 4.4.0 wrongly raises a DatabaseError for ORA-01400.
-            if e.args[0].code == 1400 and not isinstance(e, IntegrityError):
-                e = IntegrityError(e.args[0])
-            raise e
+            if hasattr(e.args[0], 'code') and e.args[0].code == 1400 and not isinstance(e, IntegrityError):
+                raise utils.IntegrityError, utils.IntegrityError(*tuple(e)), sys.exc_info()[2]
+            raise utils.DatabaseError, utils.DatabaseError(*tuple(e)), sys.exc_info()[2]
 
     def fetchone(self):
         row = self.cursor.fetchone()
         if row is None:
             return row
-        return self._rowfactory(row)
+        return _rowfactory(row, self.cursor)
 
     def fetchmany(self, size=None):
         if size is None:
             size = self.arraysize
-        return tuple([self._rowfactory(r)
+        return tuple([_rowfactory(r, self.cursor)
                       for r in self.cursor.fetchmany(size)])
 
     def fetchall(self):
-        return tuple([self._rowfactory(r)
+        return tuple([_rowfactory(r, self.cursor)
                       for r in self.cursor.fetchall()])
 
-    def _rowfactory(self, row):
-        # Cast numeric values as the appropriate Python type based upon the
-        # cursor description, and convert strings to unicode.
-        casted = []
-        for value, desc in zip(row, self.cursor.description):
-            if value is not None and desc[1] is Database.NUMBER:
-                precision, scale = desc[4:6]
-                if scale == -127:
-                    if precision == 0:
-                        # NUMBER column: decimal-precision floating point
-                        # This will normally be an integer from a sequence,
-                        # but it could be a decimal value.
-                        if '.' in value:
-                            value = Decimal(value)
-                        else:
-                            value = int(value)
-                    else:
-                        # FLOAT column: binary-precision floating point.
-                        # This comes from FloatField columns.
-                        value = float(value)
-                elif precision > 0:
-                    # NUMBER(p,s) column: decimal-precision fixed point.
-                    # This comes from IntField and DecimalField columns.
-                    if scale == 0:
-                        value = int(value)
-                    else:
-                        value = Decimal(value)
-                elif '.' in value:
-                    # No type information. This normally comes from a
-                    # mathematical expression in the SELECT list. Guess int
-                    # or Decimal based on whether it has a decimal point.
-                    value = Decimal(value)
-                else:
-                    value = int(value)
-            elif desc[1] in (Database.STRING, Database.FIXED_CHAR,
-                             Database.LONG_STRING):
-                value = to_unicode(value)
-            casted.append(value)
-        return tuple(casted)
+    def var(self, *args):
+        return VariableWrapper(self.cursor.var(*args))
+
+    def arrayvar(self, *args):
+        return VariableWrapper(self.cursor.arrayvar(*args))
 
     def __getattr__(self, attr):
         if attr in self.__dict__:
@@ -573,7 +568,63 @@ class FormatStylePlaceholderCursor(object):
             return getattr(self.cursor, attr)
 
     def __iter__(self):
-        return iter(self.cursor)
+        return CursorIterator(self.cursor)
+
+
+class CursorIterator(object):
+
+    """Cursor iterator wrapper that invokes our custom row factory."""
+
+    def __init__(self, cursor):
+        self.cursor = cursor
+        self.iter = iter(cursor)
+
+    def __iter__(self):
+        return self
+
+    def next(self):
+        return _rowfactory(self.iter.next(), self.cursor)
+
+
+def _rowfactory(row, cursor):
+    # Cast numeric values as the appropriate Python type based upon the
+    # cursor description, and convert strings to unicode.
+    casted = []
+    for value, desc in zip(row, cursor.description):
+        if value is not None and desc[1] is Database.NUMBER:
+            precision, scale = desc[4:6]
+            if scale == -127:
+                if precision == 0:
+                    # NUMBER column: decimal-precision floating point
+                    # This will normally be an integer from a sequence,
+                    # but it could be a decimal value.
+                    if '.' in value:
+                        value = Decimal(value)
+                    else:
+                        value = int(value)
+                else:
+                    # FLOAT column: binary-precision floating point.
+                    # This comes from FloatField columns.
+                    value = float(value)
+            elif precision > 0:
+                # NUMBER(p,s) column: decimal-precision fixed point.
+                # This comes from IntField and DecimalField columns.
+                if scale == 0:
+                    value = int(value)
+                else:
+                    value = Decimal(value)
+            elif '.' in value:
+                # No type information. This normally comes from a
+                # mathematical expression in the SELECT list. Guess int
+                # or Decimal based on whether it has a decimal point.
+                value = Decimal(value)
+            else:
+                value = int(value)
+        elif desc[1] in (Database.STRING, Database.FIXED_CHAR,
+                         Database.LONG_STRING):
+            value = to_unicode(value)
+        casted.append(value)
+    return tuple(casted)
 
 
 def to_unicode(s):

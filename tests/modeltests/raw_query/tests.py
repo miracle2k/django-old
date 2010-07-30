@@ -1,9 +1,13 @@
-from django.test import TestCase
-from datetime import datetime
-from models import Author, Book, Coffee, Reviewer
+from datetime import date
+
 from django.db.models.sql.query import InvalidQuery
+from django.test import TestCase
+
+from models import Author, Book, Coffee, Reviewer, FriendlyAuthor
+
 
 class RawQueryTests(TestCase):
+    fixtures = ['raw_query_books.json']
 
     def assertSuccessfulRawQuery(self, model, query, expected_results,
             expected_annotations=(), params=[], translations=None):
@@ -11,10 +15,10 @@ class RawQueryTests(TestCase):
         Execute the passed query against the passed model and check the output
         """
         results = list(model.objects.raw(query, params=params, translations=translations))
-        self.assertProcessed(results, expected_results, expected_annotations)
+        self.assertProcessed(model, results, expected_results, expected_annotations)
         self.assertAnnotations(results, expected_annotations)
 
-    def assertProcessed(self, results, orig, expected_annotations=()):
+    def assertProcessed(self, model, results, orig, expected_annotations=()):
         """
         Compare the results of a raw query against expected results
         """
@@ -24,7 +28,13 @@ class RawQueryTests(TestCase):
             for annotation in expected_annotations:
                 setattr(orig_item, *annotation)
 
-            self.assertEqual(item.id, orig_item.id)
+            for field in model._meta.fields:
+                # Check that all values on the model are equal
+                self.assertEquals(getattr(item,field.attname),
+                                  getattr(orig_item,field.attname))
+                # This includes checking that they are the same type
+                self.assertEquals(type(getattr(item,field.attname)),
+                                  type(getattr(orig_item,field.attname)))
 
     def assertNoAnnotations(self, results):
         """
@@ -112,7 +122,7 @@ class RawQueryTests(TestCase):
         author = Author.objects.all()[2]
         params = [author.first_name]
         results = list(Author.objects.raw(query, params=params))
-        self.assertProcessed(results, [author])
+        self.assertProcessed(Author, results, [author])
         self.assertNoAnnotations(results)
         self.assertEqual(len(results), 1)
 
@@ -186,3 +196,24 @@ class RawQueryTests(TestCase):
             second_iterations += 1
 
         self.assertEqual(first_iterations, second_iterations)
+
+    def testGetItem(self):
+        # Indexing on RawQuerySets
+        query = "SELECT * FROM raw_query_author ORDER BY id ASC"
+        third_author = Author.objects.raw(query)[2]
+        self.assertEqual(third_author.first_name, 'Bob')
+
+        first_two = Author.objects.raw(query)[0:2]
+        self.assertEquals(len(first_two), 2)
+
+        self.assertRaises(TypeError, lambda: Author.objects.raw(query)['test'])
+
+    def test_inheritance(self):
+        # date is the end of the Cuban Missile Crisis, I have no idea when
+        # Wesley was bron
+        f = FriendlyAuthor.objects.create(first_name="Wesley", last_name="Chun",
+            dob=date(1962, 10, 28))
+        query = "SELECT * FROM raw_query_friendlyauthor"
+        self.assertEqual(
+            [o.pk for o in FriendlyAuthor.objects.raw(query)], [f.pk]
+        )
