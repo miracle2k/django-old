@@ -3,11 +3,13 @@ import datetime
 import tempfile
 import shutil
 
-from django.db import models
+from django.db import models, connection
+from django.conf import settings
 # Can't import as "forms" due to implementation details in the test suite (the
 # current file is called "forms" and is already imported).
 from django import forms as django_forms
 from django.core.files.storage import FileSystemStorage
+from django.test import TestCase
 
 temp_storage_location = tempfile.mkdtemp()
 temp_storage = FileSystemStorage(location=temp_storage_location)
@@ -15,10 +17,17 @@ temp_storage = FileSystemStorage(location=temp_storage_location)
 class BoundaryModel(models.Model):
     positive_integer = models.PositiveIntegerField(null=True, blank=True)
 
+callable_default_value = 0
+def callable_default():
+    global callable_default_value
+    callable_default_value = callable_default_value + 1
+    return callable_default_value
+
 class Defaults(models.Model):
     name = models.CharField(max_length=255, default='class default value')
     def_date = models.DateField(default = datetime.date(1980, 1, 1))
     value = models.IntegerField(default=42)
+    callable_default = models.IntegerField(default=callable_default)
 
 class ChoiceModel(models.Model):
     """For ModelChoiceField and ModelMultipleChoiceField tests."""
@@ -40,6 +49,31 @@ class FileModel(models.Model):
 
 class FileForm(django_forms.Form):
     file1 = django_forms.FileField()
+
+class Group(models.Model):
+    name = models.CharField(max_length=10)
+
+    def __unicode__(self):
+        return u'%s' % self.name
+
+class TestTicket12510(TestCase):
+    ''' It is not necessary to generate choices for ModelChoiceField (regression test for #12510). '''
+    def setUp(self):
+        self.groups = [Group.objects.create(name=name) for name in 'abc']
+        self.old_debug = settings.DEBUG
+        # turn debug on to get access to connection.queries
+        settings.DEBUG = True
+
+    def tearDown(self):
+        settings.DEBUG = self.old_debug
+
+    def test_choices_not_fetched_when_not_rendering(self):
+        initial_queries = len(connection.queries)
+        field = django_forms.ModelChoiceField(Group.objects.order_by('-name'))
+        self.assertEqual('a', field.clean(self.groups[0].pk).name)
+        # only one query is required to pull the model from DB
+        self.assertEqual(initial_queries+1, len(connection.queries))
+
 
 __test__ = {'API_TESTS': """
 >>> from django.forms.models import ModelForm
@@ -85,6 +119,10 @@ u'class default value'
 datetime.date(1980, 1, 1)
 >>> DefaultsForm().fields['value'].initial
 42
+>>> r1 = DefaultsForm()['callable_default'].as_widget()
+>>> r2 = DefaultsForm()['callable_default'].as_widget()
+>>> r1 == r2
+False
 
 In a ModelForm that is passed an instance, the initial values come from the
 instance's values, not the model's defaults.
@@ -102,7 +140,7 @@ datetime.date(1969, 4, 4)
 ...     name = CharField(max_length=255)
 ...     class Meta:
 ...         model = Defaults
-...         exclude = ['name']
+...         exclude = ['name', 'callable_default']
 >>> f = ExcludingForm({'name': u'Hello', 'value': 99, 'def_date': datetime.date(1999, 3, 2)})
 >>> f.is_valid()
 True

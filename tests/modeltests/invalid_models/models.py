@@ -8,7 +8,11 @@ from django.db import models
 
 class FieldErrors(models.Model):
     charfield = models.CharField()
+    charfield2 = models.CharField(max_length=-1)
+    charfield3 = models.CharField(max_length="bad")
     decimalfield = models.DecimalField()
+    decimalfield2 = models.DecimalField(max_digits=-1, decimal_places=-1)
+    decimalfield3 = models.DecimalField(max_digits="bad", decimal_places="bad")
     filefield = models.FileField()
     choices = models.CharField(max_length=10, choices='bad')
     choices2 = models.CharField(max_length=10, choices=[(1,2,3),(1,2,3)])
@@ -76,10 +80,10 @@ class ValidM2M(models.Model):
     # M2M fields are symmetrical by default. Symmetrical M2M fields
     # on self don't require a related accessor, so many potential
     # clashes are avoided.
-    validm2m_set = models.ManyToManyField("ValidM2M")
+    validm2m_set = models.ManyToManyField("self")
 
-    m2m_1 = models.ManyToManyField("ValidM2M", related_name='id')
-    m2m_2 = models.ManyToManyField("ValidM2M", related_name='src_safe')
+    m2m_1 = models.ManyToManyField("self", related_name='id')
+    m2m_2 = models.ManyToManyField("self", related_name='src_safe')
 
     m2m_3 = models.ManyToManyField('self')
     m2m_4 = models.ManyToManyField('self')
@@ -90,10 +94,10 @@ class SelfClashM2M(models.Model):
 
     # Non-symmetrical M2M fields _do_ have related accessors, so
     # there is potential for clashes.
-    selfclashm2m_set = models.ManyToManyField("SelfClashM2M", symmetrical=False)
+    selfclashm2m_set = models.ManyToManyField("self", symmetrical=False)
 
-    m2m_1 = models.ManyToManyField("SelfClashM2M", related_name='id', symmetrical=False)
-    m2m_2 = models.ManyToManyField("SelfClashM2M", related_name='src_safe', symmetrical=False)
+    m2m_1 = models.ManyToManyField("self", related_name='id', symmetrical=False)
+    m2m_2 = models.ManyToManyField("self", related_name='src_safe', symmetrical=False)
 
     m2m_3 = models.ManyToManyField('self', symmetrical=False)
     m2m_4 = models.ManyToManyField('self', symmetrical=False)
@@ -180,12 +184,38 @@ class AbstractRelationModel(models.Model):
 
 class UniqueM2M(models.Model):
     """ Model to test for unique ManyToManyFields, which are invalid. """
-    unique_people = models.ManyToManyField( Person, unique=True )
+    unique_people = models.ManyToManyField(Person, unique=True)
+
+class NonUniqueFKTarget1(models.Model):
+    """ Model to test for non-unique FK target in yet-to-be-defined model: expect an error """
+    tgt = models.ForeignKey('FKTarget', to_field='bad')
+
+class UniqueFKTarget1(models.Model):
+    """ Model to test for unique FK target in yet-to-be-defined model: expect no error """
+    tgt = models.ForeignKey('FKTarget', to_field='good')
+
+class FKTarget(models.Model):
+    bad = models.IntegerField()
+    good = models.IntegerField(unique=True)
+
+class NonUniqueFKTarget2(models.Model):
+    """ Model to test for non-unique FK target in previously seen model: expect an error """
+    tgt = models.ForeignKey(FKTarget, to_field='bad')
+
+class UniqueFKTarget2(models.Model):
+    """ Model to test for unique FK target in previously seen model: expect no error """
+    tgt = models.ForeignKey(FKTarget, to_field='good')
 
 
-model_errors = """invalid_models.fielderrors: "charfield": CharFields require a "max_length" attribute.
-invalid_models.fielderrors: "decimalfield": DecimalFields require a "decimal_places" attribute.
-invalid_models.fielderrors: "decimalfield": DecimalFields require a "max_digits" attribute.
+model_errors = """invalid_models.fielderrors: "charfield": CharFields require a "max_length" attribute that is a positive integer.
+invalid_models.fielderrors: "charfield2": CharFields require a "max_length" attribute that is a positive integer.
+invalid_models.fielderrors: "charfield3": CharFields require a "max_length" attribute that is a positive integer.
+invalid_models.fielderrors: "decimalfield": DecimalFields require a "decimal_places" attribute that is a non-negative integer.
+invalid_models.fielderrors: "decimalfield": DecimalFields require a "max_digits" attribute that is a positive integer.
+invalid_models.fielderrors: "decimalfield2": DecimalFields require a "decimal_places" attribute that is a non-negative integer.
+invalid_models.fielderrors: "decimalfield2": DecimalFields require a "max_digits" attribute that is a positive integer.
+invalid_models.fielderrors: "decimalfield3": DecimalFields require a "decimal_places" attribute that is a non-negative integer.
+invalid_models.fielderrors: "decimalfield3": DecimalFields require a "max_digits" attribute that is a positive integer.
 invalid_models.fielderrors: "filefield": FileFields require an "upload_to" attribute.
 invalid_models.fielderrors: "choices": "choices" should be iterable (e.g., a tuple or list).
 invalid_models.fielderrors: "choices2": "choices" should be a sequence of two-tuples.
@@ -268,8 +298,8 @@ invalid_models.selfclashm2m: Reverse query name for m2m field 'm2m_3' clashes wi
 invalid_models.selfclashm2m: Reverse query name for m2m field 'm2m_4' clashes with field 'SelfClashM2M.selfclashm2m'. Add a related_name argument to the definition for 'm2m_4'.
 invalid_models.missingrelations: 'rel1' has a relation with model Rel1, which has either not been installed or is abstract.
 invalid_models.missingrelations: 'rel2' has an m2m relation with model Rel2, which has either not been installed or is abstract.
-invalid_models.grouptwo: 'primary' has a manually-defined m2m relation through model Membership, which does not have foreign keys to Person and GroupTwo
-invalid_models.grouptwo: 'secondary' has a manually-defined m2m relation through model MembershipMissingFK, which does not have foreign keys to Group and GroupTwo
+invalid_models.grouptwo: 'primary' is a manually-defined m2m relation through model Membership, which does not have foreign keys to Person and GroupTwo
+invalid_models.grouptwo: 'secondary' is a manually-defined m2m relation through model MembershipMissingFK, which does not have foreign keys to Group and GroupTwo
 invalid_models.missingmanualm2mmodel: 'missing_m2m' specifies an m2m relation through model MissingM2MModel, which has not been installed
 invalid_models.group: The model Group has two manually-defined m2m relations through the model Membership, which is not permitted. Please consider using an extra field on your intermediary model instead.
 invalid_models.group: Intermediary model RelationshipDoubleFK has more than one foreign key to Person, which is ambiguous and is not permitted.
@@ -279,4 +309,6 @@ invalid_models.personselfrefm2mexplicit: Many-to-many fields with intermediate t
 invalid_models.abstractrelationmodel: 'fk1' has a relation with model AbstractModel, which has either not been installed or is abstract.
 invalid_models.abstractrelationmodel: 'fk2' has an m2m relation with model AbstractModel, which has either not been installed or is abstract.
 invalid_models.uniquem2m: ManyToManyFields cannot be unique.  Remove the unique argument on 'unique_people'.
+invalid_models.nonuniquefktarget1: Field 'bad' under model 'FKTarget' must have a unique=True constraint.
+invalid_models.nonuniquefktarget2: Field 'bad' under model 'FKTarget' must have a unique=True constraint.
 """

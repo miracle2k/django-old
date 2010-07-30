@@ -196,6 +196,17 @@ callable it will be called every time a new object is created.
 If ``False``, the field will not be editable in the admin or via forms
 automatically generated from the model class. Default is ``True``.
 
+``error_messages``
+------------------
+
+.. versionadded:: 1.2
+
+.. attribute:: Field.error_messages
+
+The ``error_messages`` argument lets you override the default messages that the
+field will raise. Pass in a dictionary with keys matching the error messages you
+want to override.
+
 ``help_text``
 -------------
 
@@ -284,6 +295,17 @@ underscores to spaces. See :ref:`Verbose field names <verbose-field-names>`.
 
 .. _model-field-types:
 
+``validators``
+-------------------
+
+.. versionadded:: 1.2
+
+.. attribute:: Field.validators
+
+A list of validators to run for this field.See the :ref:`validators
+documentation <ref-validators>` for more information.
+
+
 Field types
 ===========
 
@@ -299,6 +321,18 @@ according to available IDs. You usually won't need to use this directly; a
 primary key field will automatically be added to your model if you don't specify
 otherwise. See :ref:`automatic-primary-key-fields`.
 
+``BigIntegerField``
+-------------------
+
+.. versionadded:: 1.2
+
+.. class:: BigIntegerField([**options])
+
+A 64 bit integer, much like an :class:`IntegerField` except that it is
+guaranteed to fit numbers from -9223372036854775808 to 9223372036854775807. The
+admin represents this as an ``<input type="text">`` (a single-line input).
+
+
 ``BooleanField``
 ----------------
 
@@ -308,18 +342,11 @@ A true/false field.
 
 The admin represents this as a checkbox.
 
-.. admonition:: MySQL users..
+.. versionchanged:: 1.2
 
-    A boolean field in MySQL is stored as a ``TINYINT`` column with a value of
-    either 0 or 1 (most databases have a proper ``BOOLEAN`` type instead). So,
-    for MySQL, only, when a ``BooleanField`` is retrieved from the database
-    and stored on a model attribute, it will have the values 1 or 0, rather
-    than ``True`` or ``False``. Normally, this shouldn't be a problem, since
-    Python guarantees that ``1 == True`` and ``0 == False`` are both true.
-    Just be careful if you're writing something like ``obj is True`` when
-    ``obj`` is a value from a boolean attribute on a model. If that model was
-    constructed using the ``mysql`` backend, the "``is``" test will fail.
-    Prefer an equality test (using "``==``") in cases like this.
+    In previous versions of Django when running under MySQL ``BooleanFields``
+    would return their data as ``ints``, instead of true ``bools``.  See the
+    release notes for a complete description of the change.
 
 ``CharField``
 -------------
@@ -543,7 +570,46 @@ By default, :class:`FileField` instances are
 created as ``varchar(100)`` columns in your database. As with other fields, you
 can change the maximum length using the :attr:`~CharField.max_length` argument.
 
-.. _`strftime formatting`: http://docs.python.org/lib/module-time.html#l2h-1941
+.. _`strftime formatting`: http://docs.python.org/library/time.html#time.strftime
+
+FileField and FieldFile
+~~~~~~~~~~~~~~~~~~~~~~~
+
+When you access a :class:`FileField` on a model, you are given an instance
+of :class:`FieldFile` as a proxy for accessing the underlying file. This
+class has several methods that can be used to interact with file data:
+
+.. method:: FieldFile.open(mode='rb')
+
+Behaves like the standard Python ``open()`` method and opens the file
+associated with this instance in the mode specified by ``mode``.
+
+.. method:: FieldFile.close()
+
+Behaves like the standard Python ``file.close()`` method and closes the file
+associated with this instance.
+
+.. method:: FieldFile.save(name, content, save=True)
+
+This method takes a filename and file contents and passes them to the storage
+class for the field, then associates the stored file with the model field.
+If you want to manually associate file data with :class:`FileField`
+instances on your model, the ``save()`` method is used to persist that file
+data.
+
+Takes two required arguments: ``name`` which is the name of the file, and
+``content`` which is a file-like object containing the file's contents. The
+optional ``save`` argument controls whether or not the instance is saved after
+the file has been altered. Defaults to ``True``.
+
+.. method:: FieldFile.delete(save=True)
+
+Deletes the file associated with this instance and clears all attributes on
+the field. Note: This method will close the file if it happens to be open when
+``delete()`` is called.
+
+The optional ``save`` argument controls whether or not the instance is saved
+after the file has been deleted. Defaults to ``True``.
 
 ``FilePathField``
 -----------------
@@ -605,8 +671,15 @@ The admin represents this as an ``<input type="text">`` (a single-line input).
 
 .. class:: ImageField(upload_to=None, [height_field=None, width_field=None, max_length=100, **options])
 
-Like :class:`FileField`, but validates that the uploaded object is a valid
-image. Has two extra optional arguments:
+Inherits all attributes and methods from :class:`FileField`, but also
+validates that the uploaded object is a valid image.
+
+In addition to the special attributes that are available for :class:`FileField`,
+an :class:`ImageField` also has :attr:`~django.core.files.File.height` and
+:attr:`~django.core.files.File.width` attributes.
+
+To facilitate querying on those attributes, :class:`ImageField` has two extra
+optional arguments:
 
 .. attribute:: ImageField.height_field
 
@@ -618,10 +691,6 @@ image. Has two extra optional arguments:
     Name of a model field which will be auto-populated with the width of the
     image each time the model instance is saved.
 
-In addition to the special attributes that are available for :class:`FileField`,
-an :class:`ImageField` also has ``File.height`` and ``File.width`` attributes.
-See :ref:`topics-files`.
-
 Requires the `Python Imaging Library`_.
 
 .. _Python Imaging Library: http://www.pythonware.com/products/pil/
@@ -629,9 +698,9 @@ Requires the `Python Imaging Library`_.
 .. versionadded:: 1.0
    The ``max_length`` argument was added in this version.
 
-By default, :class:`ImageField` instances are
-created as ``varchar(100)`` columns in your database. As with other fields, you
-can change the maximum length using the :attr:`~CharField.max_length` argument.
+By default, :class:`ImageField` instances are created as ``varchar(100)``
+columns in your database. As with other fields, you can change the maximum
+length using the :attr:`~CharField.max_length` argument.
 
 ``IntegerField``
 ----------------
@@ -737,10 +806,11 @@ A :class:`CharField` for a URL. Has one extra optional argument:
 .. attribute:: URLField.verify_exists
 
     If ``True`` (the default), the URL given will be checked for existence
-    (i.e., the URL actually loads and doesn't give a 404 response). It should
-    be noted that when using the single-threaded development server, validating
-    a url being serverd by the same server will hang.
-    This should not be a problem for multithreaded servers.
+    (i.e., the URL actually loads and doesn't give a 404 response).
+
+    Note that when you're using the single-threaded development server,
+    validating a URL being served by the same server will hang. This should not
+    be a problem for multithreaded servers.
 
 The admin represents this as an ``<input type="text">`` (a single-line input).
 
@@ -844,10 +914,10 @@ define the details of how the relation works.
     current date/time to be chosen.
 
     Instead of a dictionary this can also be a :class:`~django.db.models.Q`
-    object for more :ref:`complex queries <complex-lookups-with-q>`.
-
-    ``limit_choices_to`` has no effect on the inline FormSets that are created
-    to display related objects in the admin.
+    object for more :ref:`complex queries <complex-lookups-with-q>`. However,
+    if ``limit_choices_to`` is a :class:`~django.db.models.Q` object then it
+    will only have an effect on the choices available in the admin when the
+    field is not listed in ``raw_id_fields`` in the ``ModelAdmin`` for the model.
 
 .. attribute:: ForeignKey.related_name
 
@@ -878,12 +948,13 @@ the model is related. This works exactly the same as it does for
 Database Representation
 ~~~~~~~~~~~~~~~~~~~~~~~
 
-Behind the scenes, Django creates an intermediary join table to represent the
-many-to-many relationship. By default, this table name is generated using the
-names of the two tables being joined. Since some databases don't support table
-names above a certain length, these table names will be automatically
-truncated to 64 characters and a uniqueness hash will be used. This means you
-might see table names like ``author_books_9cdf4``; this is perfectly normal.
+Behind the scenes, Django creates an intermediary join table to
+represent the many-to-many relationship. By default, this table name
+is generated using the name of the many-to-many field and the model
+that contains it. Since some databases don't support table names above
+a certain length, these table names will be automatically truncated to
+64 characters and a uniqueness hash will be used. This means you might
+see table names like ``author_books_9cdf4``; this is perfectly normal.
 You can manually provide the name of the join table using the
 :attr:`~ManyToManyField.db_table` option.
 
@@ -905,7 +976,7 @@ that control how the relationship functions.
 
     ``limit_choices_to`` has no effect when used on a ``ManyToManyField`` with a
     custom intermediate table specified using the
-    :attr:`~ManyToManyField.through` paramter.
+    :attr:`~ManyToManyField.through` parameter.
 
 .. attribute:: ManyToManyField.symmetrical
 

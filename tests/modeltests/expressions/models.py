@@ -78,7 +78,7 @@ __test__ = {'API_TESTS': """
 >>> c.save()
 
 # F Expressions can also span joins
->>> Company.objects.filter(ceo__firstname=F('point_of_contact__firstname')).distinct()
+>>> Company.objects.filter(ceo__firstname=F('point_of_contact__firstname')).distinct().order_by('name')
 [<Company: Foobar Ltd.>, <Company: Test GmbH>]
 
 >>> _ = Company.objects.exclude(ceo__firstname=F('point_of_contact__firstname')).update(name='foo')
@@ -127,6 +127,6 @@ FieldError: Joined field references are not permitted in this query
 >>> acme.save()
 Traceback (most recent call last):
 ...
-TypeError: int() argument must be a string or a number...
+TypeError: ...
 
 """}

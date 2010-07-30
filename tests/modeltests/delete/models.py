@@ -171,9 +171,9 @@ True
 # temporarily replace the UpdateQuery class to verify that E.f is actually nulled out first
 >>> import django.db.models.sql
 >>> class LoggingUpdateQuery(django.db.models.sql.UpdateQuery):
-...     def clear_related(self, related_field, pk_list):
+...     def clear_related(self, related_field, pk_list, using):
 ...         print "CLEARING FIELD",related_field.name
-...         return super(LoggingUpdateQuery, self).clear_related(related_field, pk_list)
+...         return super(LoggingUpdateQuery, self).clear_related(related_field, pk_list, using)
 >>> original_class = django.db.models.sql.UpdateQuery
 >>> django.db.models.sql.UpdateQuery = LoggingUpdateQuery
 >>> e1.delete()
@@ -198,5 +198,10 @@ CLEARING FIELD f
 
 # Put this back to normal
 >>> django.db.models.sql.UpdateQuery = original_class
+
+# Restore the app cache to previous condition so that all models are accounted for.
+>>> cache.app_models['delete'].keyOrder = ['a', 'b', 'c', 'd', 'e', 'f']
+>>> clear_rel_obj_caches([A, B, C, D, E, F])
+
 """
 }

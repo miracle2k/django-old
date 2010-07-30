@@ -3,6 +3,7 @@ from django.contrib import admin
 from django.contrib.admin import widgets
 from unittest import TestCase
 from django.test import TestCase as DjangoTestCase
+from django.db.models import DateField
 import models
 
 class AdminFormfieldForDBFieldTests(TestCase):
@@ -89,7 +90,7 @@ class AdminFormfieldForDBFieldTests(TestCase):
 
     def testFormfieldOverrides(self):
         self.assertFormfield(models.Event, 'start_date', forms.TextInput,
-                             formfield_overrides={'widget': forms.TextInput})
+                             formfield_overrides={DateField: {'widget': forms.TextInput}})
 
     def testFieldWithChoices(self):
         self.assertFormfield(models.Member, 'gender', forms.Select)
@@ -127,6 +128,26 @@ class AdminForeignKeyWidgetChangeList(DjangoTestCase):
         response = self.client.get('%s/admin_widgets/car/' % self.admin_root)
         self.failUnless('%s/auth/user/add/' % self.admin_root in response.content)
 
-class OldAdminForeignKeyWidgetChangeList(AdminForeignKeyWidgetChangeList):
-    urls = 'regressiontests.admin_widgets.urls2'
-    admin_root = '/deep/down/admin'
+class AdminForeignKeyRawIdWidget(DjangoTestCase):
+    fixtures = ["admin-widgets-users.xml"]
+    admin_root = '/widget_admin'
+
+    def setUp(self):
+        self.client.login(username="super", password="secret")
+
+    def tearDown(self):
+        self.client.logout()
+
+    def test_nonexistent_target_id(self):
+        band = models.Band.objects.create(name='Bogey Blues')
+        pk = band.pk
+        band.delete()
+        post_data = {
+            "band": u'%s' % pk,
+        }
+        # Try posting with a non-existent pk in a raw id field: this
+        # should result in an error message, not a server exception.
+        response = self.client.post('%s/admin_widgets/event/add/' % self.admin_root,
+            post_data)
+        self.assertContains(response,
+            'Select a valid choice. That choice is not one of the available choices.')

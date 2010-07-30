@@ -46,10 +46,10 @@ To enable CSRF protection for your views, follow these steps:
        ``django.views.decorators.csrf.csrf_protect`` on particular views you
        want to protect (see below).
 
-    2. In any template that uses a POST form, use the ``csrf_token`` tag inside
+    2. In any template that uses a POST form, use the :ttag:`csrf_token` tag inside
        the ``<form>`` element if the form is for an internal URL, e.g.::
 
-           <form action="" method="POST">{% csrf_token %}
+           <form action="" method="post">{% csrf_token %}
 
        This should not be done for POST forms that target external URLs, since
        that would cause the CSRF token to be leaked, leading to a vulnerability.
@@ -123,14 +123,14 @@ as ``CsrfResponseMiddleware``, and it can be used by following these steps:
 
        ``CsrfResponseMiddleware`` needs to process the response before things
        like compression or setting ofETags happen to the response, so it must
-       come after ``GZipMiddleware``, ``CommonMiddleware`` and 
+       come after ``GZipMiddleware``, ``CommonMiddleware`` and
        ``ConditionalGetMiddleware`` in the list. It also must come after
        ``CsrfViewMiddleware``.
 
 Use of the ``CsrfResponseMiddleware`` is not recommended because of the
 performance hit it imposes, and because of a potential security problem (see
 below).  It can be used as an interim measure until applications have been
-updated to use the ``{% csrf_token %}`` tag.  It is deprecated and will be
+updated to use the :ttag:`csrf_token` tag.  It is deprecated and will be
 removed in Django 1.4.
 
 Django 1.1 and earlier provided a single ``CsrfMiddleware`` class.  This is also
@@ -152,6 +152,8 @@ Armed with this leaked information, that site will then be able to successfully
 launch a CSRF attack on your site against that user.  The
 ``@csrf_response_exempt`` decorator can be used to fix this, but only if the
 page doesn't also contain internal forms that require the token.
+
+.. _ref-csrf-upgrading-notes:
 
 Upgrading notes
 ---------------
@@ -176,9 +178,9 @@ continue to work for now, but they are deprecated and will be removed in Django
 django.contrib.csrf.middleware.CsrfMiddleware           django.middleware.csrf.CsrfMiddleware
 django.contrib.csrf.middleware.CsrfViewMiddleware       django.middleware.csrf.CsrfViewMiddleware
 django.contrib.csrf.middleware.CsrfResponseMiddleware   django.middleware.csrf.CsrfResponseMiddleware
-django.contrib.csrf.middleware.csrf_exempt              django.views.decorators.csrf_exempt
-django.contrib.csrf.middleware.csrf_view_exempt         django.views.decorators.csrf_view_exempt
-django.contrib.csrf.middleware.csrf_response_exempt     django.views.decorators.csrf_response_exempt
+django.contrib.csrf.middleware.csrf_exempt              django.views.decorators.csrf.csrf_exempt
+django.contrib.csrf.middleware.csrf_view_exempt         django.views.decorators.csrf.csrf_view_exempt
+django.contrib.csrf.middleware.csrf_response_exempt     django.views.decorators.csrf.csrf_response_exempt
 ======================================================  ==============================================
 
 You should update any imports, and also the paths in your
@@ -199,7 +201,7 @@ Note that contrib apps, such as the admin, have been updated to use the
 ``CsrfViewMiddleware`` to your settings.  However, if you have supplied
 customised templates to any of the view functions of contrib apps (whether
 explicitly via a keyword argument, or by overriding built-in templates), **you
-MUST update them** to include the ``csrf_token`` template tag as described
+MUST update them** to include the :ttag:`csrf_token` template tag as described
 above, or they will stop working.  (If you cannot update these templates for
 some reason, you will be forced to use ``CsrfResponseMiddleware`` for these
 views to continue working).
@@ -242,6 +244,8 @@ Exceptions
 ----------
 
 .. versionadded:: 1.1
+.. versionchanged:: 1.2
+    Import paths for the decorators below were changed.
 
 To manually exclude a view function from being handled by either of the two CSRF
 middleware, you can use the ``csrf_exempt`` decorator, found in the
@@ -364,7 +368,7 @@ exactly that.
 Caching
 =======
 
-If the ``csrf_token`` template tag is used by a template (or the ``get_token``
+If the :ttag:`csrf_token` template tag is used by a template (or the ``get_token``
 function is called some other way), ``CsrfViewMiddleware`` will add a cookie and
 a ``Vary: Cookie`` header to the response.  Similarly,
 ``CsrfResponseMiddleware`` will send the ``Vary: Cookie`` header if it inserted

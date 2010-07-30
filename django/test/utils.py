@@ -1,6 +1,5 @@
 import sys, time, os
 from django.conf import settings
-from django.db import connection
 from django.core import mail
 from django.core.mail.backends import locmem
 from django.test import signals
@@ -16,7 +15,7 @@ class ContextList(list):
             for subcontext in self:
                 if key in subcontext:
                     return subcontext[key]
-            raise KeyError
+            raise KeyError(key)
         else:
             return super(ContextList, self).__getitem__(key)
 
@@ -37,14 +36,14 @@ def setup_test_environment():
         - Set the email backend to the locmem email backend.
         - Setting the active locale to match the LANGUAGE_CODE setting.
     """
-    Template.original_render = Template.render
-    Template.render = instrumented_test_render
+    Template.original_render = Template._render
+    Template._render = instrumented_test_render
 
     mail.original_SMTPConnection = mail.SMTPConnection
     mail.SMTPConnection = locmem.EmailBackend
 
     mail.original_email_backend = settings.EMAIL_BACKEND
-    settings.EMAIL_BACKEND = 'django.core.mail.backends.locmem'
+    settings.EMAIL_BACKEND = 'django.core.mail.backends.locmem.EmailBackend'
 
     mail.outbox = []
 
@@ -57,7 +56,7 @@ def teardown_test_environment():
         - Restoring the email sending functions
 
     """
-    Template.render = Template.original_render
+    Template._render = Template.original_render
     del Template.original_render
 
     mail.SMTPConnection = mail.original_SMTPConnection

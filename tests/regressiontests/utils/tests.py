@@ -4,30 +4,29 @@ Tests for django.utils.
 
 from unittest import TestCase
 
-from django.utils import html, checksums
+from django.utils import html, checksums, text
 from django.utils.functional import SimpleLazyObject
 
 import timesince
 import datastructures
-import dateformat
-import itercompat
-from decorators import DecoratorFromMiddlewareTests
+import datetime_safe
+import tzinfo
 
-# We need this because "datastructures" uses sorted() and the tests are run in
-# the scope of this module.
-try:
-    sorted
-except NameError:
-    from django.utils.itercompat import sorted  # For Python 2.3
+from decorators import DecoratorFromMiddlewareTests
+from functional import FunctionalTestCase
 
 # Extra tests
 __test__ = {
     'timesince': timesince,
     'datastructures': datastructures,
-    'itercompat': itercompat,
+    'datetime_safe': datetime_safe,
+    'tzinfo': tzinfo,
 }
 
 from dateformat import *
+from feedgenerator import *
+from module_loading import *
+from termcolors import *
 
 class TestUtilsHtml(TestCase):
 
@@ -220,7 +219,7 @@ class TestUtilsSimpleLazyObject(TestCase):
         self.assertEqual(_ComplexObject, SimpleLazyObject(complex_object).__class__)
 
     def test_deepcopy(self):
-        import copy
+        import django.utils.copycompat as copy
         # Check that we *can* do deep copy, and that it returns the right
         # objects.
 
@@ -236,6 +235,24 @@ class TestUtilsSimpleLazyObject(TestCase):
         assert s._wrapped is not None
         s3 = copy.deepcopy(s)
         self.assertEqual(s3, complex_object())
+
+class TestUtilsText(TestCase):
+
+    def test_truncate_words(self):
+        self.assertEqual(u'The quick brown fox jumped over the lazy dog.',
+            text.truncate_words(u'The quick brown fox jumped over the lazy dog.', 10))
+        self.assertEqual(u'The quick brown fox ...',
+            text.truncate_words('The quick brown fox jumped over the lazy dog.', 4))
+        self.assertEqual(u'The quick brown fox ....',
+            text.truncate_words('The quick brown fox jumped over the lazy dog.', 4, '....'))
+        self.assertEqual(u'<p><strong><em>The quick brown fox jumped over the lazy dog.</em></strong></p>',
+            text.truncate_html_words('<p><strong><em>The quick brown fox jumped over the lazy dog.</em></strong></p>', 10))
+        self.assertEqual(u'<p><strong><em>The quick brown fox ...</em></strong></p>',
+            text.truncate_html_words('<p><strong><em>The quick brown fox jumped over the lazy dog.</em></strong></p>', 4))
+        self.assertEqual(u'<p><strong><em>The quick brown fox ....</em></strong></p>',
+            text.truncate_html_words('<p><strong><em>The quick brown fox jumped over the lazy dog.</em></strong></p>', 4, '....'))
+        self.assertEqual(u'<p><strong><em>The quick brown fox</em></strong></p>',
+            text.truncate_html_words('<p><strong><em>The quick brown fox jumped over the lazy dog.</em></strong></p>', 4, None))
 
 if __name__ == "__main__":
     import doctest

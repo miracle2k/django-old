@@ -1,9 +1,10 @@
 from django.middleware.csrf import CsrfViewMiddleware
-from django.utils.decorators import decorator_from_middleware
+from django.utils.decorators import decorator_from_middleware, available_attrs
+
 try:
     from functools import wraps
 except ImportError:
-    from django.utils.functional import wraps  # Python 2.3, 2.4 fallback.
+    from django.utils.functional import wraps  # Python 2.4 fallback.
 
 csrf_protect = decorator_from_middleware(CsrfViewMiddleware)
 csrf_protect.__name__ = "csrf_protect"
@@ -22,7 +23,7 @@ def csrf_response_exempt(view_func):
         resp = view_func(*args, **kwargs)
         resp.csrf_exempt = True
         return resp
-    return wraps(view_func)(wrapped_view)
+    return wraps(view_func, assigned=available_attrs(view_func))(wrapped_view)
 
 def csrf_view_exempt(view_func):
     """
@@ -34,7 +35,7 @@ def csrf_view_exempt(view_func):
     def wrapped_view(*args, **kwargs):
         return view_func(*args, **kwargs)
     wrapped_view.csrf_exempt = True
-    return wraps(view_func)(wrapped_view)
+    return wraps(view_func, assigned=available_attrs(view_func))(wrapped_view)
 
 def csrf_exempt(view_func):
     """

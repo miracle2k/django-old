@@ -38,6 +38,9 @@ class Student(CommonInfo):
     class Meta:
         pass
 
+class StudentWorker(Student, Worker):
+    pass
+
 #
 # Abstract base classes with related models
 #
@@ -116,6 +119,31 @@ class ParkingLot(Place):
     def __unicode__(self):
         return u"%s the parking lot" % self.name
 
+#
+# Abstract base classes with related models where the sub-class has the
+# same name in a different app and inherits from the same abstract base
+# class.
+# NOTE: The actual API tests for the following classes are in
+#       model_inheritance_same_model_name/models.py - They are defined
+#       here in order to have the name conflict between apps
+#
+
+class Title(models.Model):
+    title = models.CharField(max_length=50)
+
+class NamedURL(models.Model):
+    title = models.ForeignKey(Title, related_name='attached_%(app_label)s_%(class)s_set')
+    url = models.URLField()
+
+    class Meta:
+        abstract = True
+
+class Copy(NamedURL):
+    content = models.TextField()
+
+    def __unicode__(self):
+        return self.content
+
 __test__ = {'API_TESTS':"""
 # The Student and Worker models both have 'name' and 'age' fields on them and
 # inherit the __unicode__() method, just as with normal Python subclassing.
@@ -150,6 +178,32 @@ u'Student Pebbles'
 Traceback (most recent call last):
     ...
 AttributeError: type object 'CommonInfo' has no attribute 'objects'
+
+# A StudentWorker which does not exist is both a Student and Worker which does not exist.
+>>> try:
+...     StudentWorker.objects.get(id=1)
+... except Student.DoesNotExist:
+...     pass
+>>> try:
+...     StudentWorker.objects.get(id=1)
+... except Worker.DoesNotExist:
+...     pass
+
+# MultipleObjectsReturned is also inherited.
+>>> sw1 = StudentWorker()
+>>> sw1.name = 'Wilma'
+>>> sw1.age = 35
+>>> sw1.save()
+>>> sw2 = StudentWorker()
+>>> sw2.name = 'Betty'
+>>> sw2.age = 34
+>>> sw2.save()
+>>> try:
+...     StudentWorker.objects.get(id__lt=10)
+... except Student.MultipleObjectsReturned:
+...     pass
+... except Worker.MultipleObjectsReturned:
+...     pass
 
 # Create a Post
 >>> post = Post(title='Lorem Ipsum')
@@ -241,6 +295,18 @@ FieldError: Cannot resolve keyword 'supplier' into field. Choices are: address, 
 Traceback (most recent call last):
     ...
 DoesNotExist: ItalianRestaurant matching query does not exist.
+
+# An ItalianRestaurant which does not exist is also a Place which does not exist.
+>>> try:
+...     ItalianRestaurant.objects.get(name='The Noodle Void')
+... except Place.DoesNotExist:
+...     pass
+
+# MultipleObjectsReturned is also inherited.
+>>> try:
+...     Restaurant.objects.get(id__lt=10)
+... except Place.MultipleObjectsReturned:
+...     pass
 
 # Related objects work just as they normally do.
 

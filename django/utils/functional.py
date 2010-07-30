@@ -60,9 +60,6 @@ def curry(_curried_func, *args, **kwargs):
 # Summary of changes made to the Python 2.5 code below:
 #   * swapped ``partial`` for ``curry`` to maintain backwards-compatibility
 #     in Django.
-#   * Wrapped the ``setattr`` call in ``update_wrapper`` with a try-except
-#     block to make it compatible with Python 2.3, which doesn't allow
-#     assigning to ``__name__``.
 
 # Copyright (c) 2001, 2002, 2003, 2004, 2005, 2006, 2007 Python Software Foundation.
 # All Rights Reserved.
@@ -90,10 +87,7 @@ def update_wrapper(wrapper,
        function (defaults to functools.WRAPPER_UPDATES)
     """
     for attr in assigned:
-        try:
-            setattr(wrapper, attr, getattr(wrapped, attr))
-        except TypeError: # Python 2.3 doesn't allow assigning to __name__.
-            pass
+        setattr(wrapper, attr, getattr(wrapped, attr))
     for attr in updated:
         getattr(wrapper, attr).update(getattr(wrapped, attr))
     # Return the wrapper so this can be used as a decorator via curry()
@@ -147,6 +141,7 @@ def lazy(func, *resultclasses):
     the lazy evaluation code is triggered. Results are not memoized; the
     function is evaluated on every access.
     """
+
     class __proxy__(Promise):
         """
         Encapsulate a function call and act as a proxy for methods that are
@@ -162,14 +157,24 @@ def lazy(func, *resultclasses):
             if self.__dispatch is None:
                 self.__prepare_class__()
 
+        def __reduce__(self):
+            return (
+                _lazy_proxy_unpickle,
+                (self.__func, self.__args, self.__kw) + resultclasses
+            )
+
         def __prepare_class__(cls):
             cls.__dispatch = {}
             for resultclass in resultclasses:
                 cls.__dispatch[resultclass] = {}
                 for (k, v) in resultclass.__dict__.items():
+                    # All __promise__ return the same wrapper method, but they
+                    # also do setup, inserting the method into the dispatch
+                    # dict.
+                    meth = cls.__promise__(resultclass, k, v)
                     if hasattr(cls, k):
                         continue
-                    setattr(cls, k, cls.__promise__(resultclass, k, v))
+                    setattr(cls, k, meth)
             cls._delegate_str = str in resultclasses
             cls._delegate_unicode = unicode in resultclasses
             assert not (cls._delegate_str and cls._delegate_unicode), "Cannot call lazy() with both str and unicode return types."
@@ -236,6 +241,9 @@ def lazy(func, *resultclasses):
 
     return wraps(func)(__wrapper__)
 
+def _lazy_proxy_unpickle(func, args, kwargs, *resultclasses):
+    return lazy(func, *resultclasses)(*args, **kwargs)
+
 def allow_lazy(func, *resultclasses):
     """
     A decorator that allows a function to be called with one or more lazy
@@ -276,6 +284,13 @@ class LazyObject(object):
             if self._wrapped is None:
                 self._setup()
             setattr(self._wrapped, name, value)
+
+    def __delattr__(self, name):
+        if name == "_wrapped":
+            raise TypeError("can't delete _wrapped.")
+        if self._wrapped is None:
+            self._setup()
+        delattr(self._wrapped, name)
 
     def _setup(self):
         """
@@ -328,8 +343,10 @@ class SimpleLazyObject(LazyObject):
             memo[id(self)] = result
             return result
         else:
-            import copy
-            return copy.deepcopy(self._wrapped, memo)
+            # Changed to use deepcopy from copycompat, instead of copy
+            # For Python 2.4.
+            from django.utils.copycompat import deepcopy
+            return deepcopy(self._wrapped, memo)
 
     # Need to pretend to be the wrapped class, for the sake of objects that care
     # about this (especially in equality tests)

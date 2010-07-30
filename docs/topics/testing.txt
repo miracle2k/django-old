@@ -147,7 +147,7 @@ as must have ``CREATE DATABASE`` rights.
 For more details about how doctest works, see the `standard library
 documentation for doctest`_.
 
-.. _doctest: http://docs.python.org/lib/module-doctest.html
+.. _doctest: http://docs.python.org/library/doctest.html
 .. _standard library documentation for doctest: doctest_
 
 Writing unit tests
@@ -197,9 +197,9 @@ suite.
 For more details about ``unittest``, see the `standard library unittest
 documentation`_.
 
-.. _unittest: http://docs.python.org/lib/module-unittest.html
+.. _unittest: http://docs.python.org/library/unittest.html
 .. _standard library unittest documentation: unittest_
-.. _suggested organization: http://docs.python.org/lib/organizing-tests.html
+.. _suggested organization: http://docs.python.org/library/unittest.html#organizing-tests
 
 Which should I use?
 -------------------
@@ -242,8 +242,8 @@ in different circumstances.
 Running tests
 =============
 
-Once you've written tests, run them using your project's ``manage.py``
-utility::
+Once you've written tests, run them using the :djadmin:`test` subcommand of
+your project's ``manage.py`` utility::
 
     $ ./manage.py test
 
@@ -261,50 +261,141 @@ Note that we used ``animals``, not ``myproject.animals``.
 .. versionadded:: 1.0
    You can now choose which test to run.
 
-If you use unit tests, as opposed to
-doctests, you can be even *more* specific in choosing which tests to execute.
-To run a single test case in an application (for example, the
-``AnimalTestCase`` described in the "Writing unit tests" section), add the
-name of the test case to the label on the command line::
+You can be even *more* specific by naming an individual test case. To
+run a single test case in an application (for example, the
+``AnimalTestCase`` described in the "Writing unit tests" section), add
+the name of the test case to the label on the command line::
 
     $ ./manage.py test animals.AnimalTestCase
 
-And it gets even more granular than that! To run a *single* test method inside
-a test case, add the name of the test method to the label::
+And it gets even more granular than that! To run a *single* test
+method inside a test case, add the name of the test method to the
+label::
 
     $ ./manage.py test animals.AnimalTestCase.testFluffyAnimals
+
+.. versionadded:: 1.2
+   The ability to select individual doctests was added.
+
+You can use the same rules if you're using doctests. Django will use the
+test label as a path to the test method or class that you want to run.
+If your ``models.py`` or ``tests.py`` has a function with a doctest, or
+class with a class-level doctest, you can invoke that test by appending the
+name of the test method or class to the label::
+
+    $ ./manage.py test animals.classify
+
+If you want to run the doctest for a specific method in a class, add the
+name of the method to the label::
+
+    $ ./manage.py test animals.Classifier.run
+
+If you're using a ``__test__`` dictionary to specify doctests for a
+module, Django will use the label as a key in the ``__test__`` dictionary
+for defined in ``models.py`` and ``tests.py``.
+
+.. versionadded:: 1.2
+   You can now trigger a graceful exit from a test run by pressing ``Ctrl-C``.
+
+If you press ``Ctrl-C`` while the tests are running, the test runner will
+wait for the currently running test to complete and then exit gracefully.
+During a graceful exit the test runner will output details of any test
+failures, report on how many tests were run and how many errors and failures
+were encountered, and destroy any test databases as usual. Thus pressing
+``Ctrl-C`` can be very useful if you forget to pass the :djadminopt:`--failfast`
+option, notice that some tests are unexpectedly failing, and want to get details
+on the failures without waiting for the full test run to complete.
+
+If you do not want to wait for the currently running test to finish, you
+can press ``Ctrl-C`` a second time and the test run will halt immediately,
+but not gracefully. No details of the tests run before the interruption will
+be reported, and any test databases created by the run will not be destroyed.
 
 The test database
 -----------------
 
 Tests that require a database (namely, model tests) will not use your "real"
-(production) database. A separate, blank database is created for the tests.
+(production) database. Separate, blank databases are created for the tests.
 
-Regardless of whether the tests pass or fail, the test database is destroyed
+Regardless of whether the tests pass or fail, the test databases are destroyed
 when all the tests have been executed.
 
-By default this test database gets its name by prepending ``test_`` to the
-value of the :setting:`DATABASE_NAME` setting. When using the SQLite database
-engine the tests will by default use an in-memory database (i.e., the database
-will be created in memory, bypassing the filesystem entirely!). If you want to
-use a different database name, specify the :setting:`TEST_DATABASE_NAME`
-setting.
+By default the test databases get their names by prepending ``test_``
+to the value of the :setting:`NAME` settings for the databases
+defined in :setting:`DATABASES`. When using the SQLite database engine
+the tests will by default use an in-memory database (i.e., the
+database will be created in memory, bypassing the filesystem
+entirely!). If you want to use a different database name, specify
+:setting:`TEST_NAME` in the dictionary for any given database in
+:setting:`DATABASES`.
 
-Aside from using a separate database, the test runner will otherwise use all of
-the same database settings you have in your settings file:
-:setting:`DATABASE_ENGINE`, :setting:`DATABASE_USER`, :setting:`DATABASE_HOST`,
-etc. The test database is created by the user specified by
-:setting:`DATABASE_USER`, so you'll need to make sure that the given user
-account has sufficient privileges to create a new database on the system.
+Aside from using a separate database, the test runner will otherwise
+use all of the same database settings you have in your settings file:
+:setting:`ENGINE`, :setting:`USER`, :setting:`HOST`, etc. The test
+database is created by the user specified by ``USER``, so you'll need
+to make sure that the given user account has sufficient privileges to
+create a new database on the system.
 
 .. versionadded:: 1.0
 
-For fine-grained control over the
-character encoding of your test database, use the
-:setting:`TEST_DATABASE_CHARSET` setting. If you're using MySQL, you can also
-use the :setting:`TEST_DATABASE_COLLATION` setting to control the particular
-collation used by the test database. See the :ref:`settings documentation
-<ref-settings>` for details of these advanced settings.
+For fine-grained control over the character encoding of your test
+database, use the :setting:`TEST_CHARSET` option. If you're using
+MySQL, you can also use the :setting:`TEST_COLLATION` option to
+control the particular collation used by the test database. See the
+:ref:`settings documentation <ref-settings>` for details of these
+advanced settings.
+
+.. _topics-testing-masterslave:
+
+Testing master/slave configurations
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+.. versionadded:: 1.2
+
+If you're testing a multiple database configuration with master/slave
+replication, this strategy of creating test databases poses a problem.
+When the test databases are created, there won't be any replication,
+and as a result, data created on the master won't be seen on the
+slave.
+
+To compensate for this, Django allows you to define that a database is
+a *test mirror*. Consider the following (simplified) example database
+configuration::
+
+    DATABASES = {
+        'default': {
+            'ENGINE': 'django.db.backends.mysql',
+            'NAME': 'myproject',
+            'HOST': 'dbmaster',
+             # ... plus some other settings
+        },
+        'slave': {
+            'ENGINE': 'django.db.backends.mysql',
+            'NAME': 'myproject',
+            'HOST': 'dbslave',
+            'TEST_MIRROR': 'default'
+            # ... plus some other settings
+        }
+    }
+
+In this setup, we have two database servers: ``dbmaster``, described
+by the database alias ``default``, and ``dbslave`` described by the
+alias ``slave``. As you might expect, ``dbslave`` has been configured
+by the database administrator as a read slave of ``dbmaster``, so in
+normal activity, any write to ``default`` will appear on ``slave``.
+
+If Django created two independent test databases, this would break any
+tests that expected replication to occur. However, the ``slave``
+database has been configured as a test mirror (using the
+:setting:`TEST_MIRROR` setting), indicating that under testing,
+``slave`` should be treated as a mirror of ``default``.
+
+When the test environment is configured, a test version of ``slave``
+will *not* be created. Instead the connection to ``slave``
+will be redirected to point at ``default``. As a result, writes to
+``default`` will appear on ``slave`` -- but because they are actually
+the same database, not because there is data replication between the
+two databases.
 
 Other test conditions
 ---------------------
@@ -412,7 +503,7 @@ a different focus. In short:
 A comprehensive test suite should use a combination of both test types.
 
 .. _Twill: http://twill.idyll.org/
-.. _Selenium: http://www.openqa.org/selenium/
+.. _Selenium: http://seleniumhq.org/
 
 Overview and a quick example
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -465,8 +556,8 @@ Note a few important things about how the test client works:
       This black magic (essentially a patching of Django's template system in
       memory) only happens during test running.
 
-.. _urllib: http://docs.python.org/lib/module-urllib.html
-.. _urllib2: http://docs.python.org/lib/module-urllib2.html
+.. _urllib: http://docs.python.org/library/urllib.html
+.. _urllib2: http://docs.python.org/library/urllib2.html
 
 Making requests
 ~~~~~~~~~~~~~~~
@@ -577,8 +668,16 @@ arguments at time of construction:
         (The name ``attachment`` here is not relevant; use whatever name your
         file-processing code expects.)
 
-        Note that you should manually close the file after it has been provided
-        to ``post()``.
+        Note that if you wish to use the same file handle for multiple
+        ``post()`` calls then you will need to manually reset the file
+        pointer between posts. The easiest way to do this is to
+        manually close the file after it has been provided to
+        ``post()``, as demonstrated above.
+
+        You should also ensure that the file is opened in a way that
+        allows the data to be read. If your file contains binary data
+        such as an image, this means you will need to open the file in
+        ``rb`` (read binary) mode.
 
         The ``extra`` argument acts the same as for :meth:`Client.get`.
 
@@ -807,7 +906,7 @@ can access these properties as part of a test condition.
     A dictionary-like object containing session information. See the
     :ref:`session documentation<topics-http-sessions>` for full details.
 
-.. _Cookie module documentation: http://docs.python.org/lib/module-Cookie.html
+.. _Cookie module documentation: http://docs.python.org/library/cookie.html
 
 Example
 ~~~~~~~
@@ -1037,6 +1136,39 @@ URLconf for the duration of the test case.
 
 .. _emptying-test-outbox:
 
+Multi-database support
+~~~~~~~~~~~~~~~~~~~~~~
+
+.. attribute:: TestCase.multi_db
+
+.. versionadded:: 1.2
+
+Django sets up a test database corresponding to every database that is
+defined in the :setting:`DATABASES` definition in your settings
+file. However, a big part of the time taken to run a Django TestCase
+is consumed by the call to ``flush`` that ensures that you have a
+clean database at the start of each test run. If you have multiple
+databases, multiple flushes are required (one for each database),
+which can be a time consuming activity -- especially if your tests
+don't need to test multi-database activity.
+
+As an optimization, Django only flushes the ``default`` database at
+the start of each test run. If your setup contains multiple databases,
+and you have a test that requires every database to be clean, you can
+use the ``multi_db`` attribute on the test suite to request a full
+flush.
+
+For example::
+
+    class TestMyViews(TestCase):
+        multi_db = True
+
+        def testIndexPageView(self):
+            call_some_test_code()
+
+This test case will flush *all* the test databases before running
+``testIndexPageView``.
+
 Emptying the test outbox
 ~~~~~~~~~~~~~~~~~~~~~~~~
 
@@ -1052,23 +1184,32 @@ Assertions
 
 .. versionadded:: 1.0
 
+.. versionchanged:: 1.2
+    Addded ``msg_prefix`` argument.
+
 As Python's normal ``unittest.TestCase`` class implements assertion methods
 such as ``assertTrue`` and ``assertEquals``, Django's custom ``TestCase`` class
 provides a number of custom assertion methods that are useful for testing Web
 applications:
 
-.. method:: TestCase.assertContains(response, text, count=None, status_code=200)
+The failure messages given by the assertion methods can be customized
+with the ``msg_prefix`` argument. This string will be prefixed to any
+failure message generated by the assertion. This allows you to provide
+additional details that may help you to identify the location and
+cause of an failure in your test suite.
+
+.. method:: TestCase.assertContains(response, text, count=None, status_code=200, msg_prefix='')
 
     Asserts that a ``Response`` instance produced the given ``status_code`` and
     that ``text`` appears in the content of the response. If ``count`` is
     provided, ``text`` must occur exactly ``count`` times in the response.
 
-.. method:: TestCase.assertNotContains(response, text, status_code=200)
+.. method:: TestCase.assertNotContains(response, text, status_code=200, msg_prefix='')
 
     Asserts that a ``Response`` instance produced the given ``status_code`` and
     that ``text`` does not appears in the content of the response.
 
-.. method:: TestCase.assertFormError(response, form, field, errors)
+.. method:: TestCase.assertFormError(response, form, field, errors, msg_prefix='')
 
     Asserts that a field on a form raises the provided list of errors when
     rendered on the form.
@@ -1083,19 +1224,19 @@ applications:
     ``errors`` is an error string, or a list of error strings, that are
     expected as a result of form validation.
 
-.. method:: TestCase.assertTemplateUsed(response, template_name)
+.. method:: TestCase.assertTemplateUsed(response, template_name, msg_prefix='')
 
     Asserts that the template with the given name was used in rendering the
     response.
 
     The name is a string such as ``'admin/index.html'``.
 
-.. method:: TestCase.assertTemplateNotUsed(response, template_name)
+.. method:: TestCase.assertTemplateNotUsed(response, template_name, msg_prefix='')
 
     Asserts that the template with the given name was *not* used in rendering
     the response.
 
-.. method:: TestCase.assertRedirects(response, expected_url, status_code=302, target_status_code=200)
+.. method:: TestCase.assertRedirects(response, expected_url, status_code=302, target_status_code=200, msg_prefix='')
 
     Asserts that the response return a ``status_code`` redirect status, it
     redirected to ``expected_url`` (including any GET data), and the final
@@ -1106,6 +1247,19 @@ applications:
     If your request used the ``follow`` argument, the ``expected_url`` and
     ``target_status_code`` will be the url and status code for the final
     point of the redirect chain.
+
+.. method:: TestCase.assertQuerysetEqual(response, qs, values, transform=repr)
+
+    Asserts that a queryset ``qs`` returns a particular list of values ``values``.
+
+    The comparison of the contents of ``qs`` and ``values`` is performed using
+    the function ``transform``; by default, this means that the ``repr()`` of
+    each value is compared. Any other callable can be used if ``repr()`` doesn't
+    provide a unique or helpful comparison.
+
+    The comparison is also ordering dependent. If ``qs`` doesn't provide an
+    implicit ordering, you will need to apply a ``order_by()`` clause to your
+    queryset to ensure that the test will pass reliably.
 
 .. _topics-testing-email:
 
@@ -1176,41 +1330,71 @@ alternative framework as if they were normal Django tests.
 
 When you run ``./manage.py test``, Django looks at the :setting:`TEST_RUNNER`
 setting to determine what to do. By default, :setting:`TEST_RUNNER` points to
-``'django.test.simple.run_tests'``. This method defines the default Django
+``'django.test.simple.DjangoTestSuiteRunner'``. This class defines the default Django
 testing behavior. This behavior involves:
 
     #. Performing global pre-test setup.
 
-    #. Creating the test database.
-
-    #. Running ``syncdb`` to install models and initial data into the test
-       database.
-
     #. Looking for unit tests and doctests in the ``models.py`` and
        ``tests.py`` files in each installed application.
 
+    #. Creating the test databases.
+
+    #. Running ``syncdb`` to install models and initial data into the test
+       databases.
+
     #. Running the unit tests and doctests that are found.
 
-    #. Destroying the test database.
+    #. Destroying the test databases.
 
     #. Performing global post-test teardown.
 
-If you define your own test runner method and point :setting:`TEST_RUNNER` at
-that method, Django will execute your test runner whenever you run
+If you define your own test runner class and point :setting:`TEST_RUNNER` at
+that class, Django will execute your test runner whenever you run
 ``./manage.py test``. In this way, it is possible to use any test framework
-that can be executed from Python code.
+that can be executed from Python code, or to modify the Django test execution
+process to satisfy whatever testing requirements you may have.
+
+.. _topics-testing-test_runner:
 
 Defining a test runner
 ----------------------
 
-.. versionadded:: 1.0
+.. versionchanged:: 1.2
+   Prior to 1.2, test runners were a single function, not a class.
 
 .. currentmodule:: django.test.simple
 
-By convention, a test runner should be called ``run_tests``. The only strict
-requirement is that it has the same arguments as the Django test runner:
+A test runner is a class defining a ``run_tests()`` method. Django ships
+with a ``DjangoTestSuiteRunner`` class that defines the default Django
+testing behavior. This class defines the ``run_tests()`` entry point,
+plus a selection of other methods that are used to by ``run_tests()`` to
+set up, execute and tear down the test suite.
 
-.. function:: run_tests(test_labels, verbosity=1, interactive=True, extra_tests=[])
+.. class:: DjangoTestSuiteRunner(verbosity=1, interactive=True, failfast=True, **kwargs)
+
+    ``verbosity`` determines the amount of notification and debug information
+    that will be printed to the console; ``0`` is no output, ``1`` is normal
+    output, and ``2`` is verbose output.
+
+    If ``interactive`` is ``True``, the test suite has permission to ask the
+    user for instructions when the test suite is executed. An example of this
+    behavior would be asking for permission to delete an existing test
+    database. If ``interactive`` is ``False``, the test suite must be able to
+    run without any manual intervention.
+
+    If ``failfast`` is ``True``, the test suite will stop running after the
+    first test failure is detected.
+
+    Django will, from time to time, extend the capabilities of
+    the test runner by adding new arguments. The ``**kwargs`` declaration
+    allows for this expansion. If you subclass ``DjangoTestSuiteRunner`` or
+    write your own test runner, ensure accept and handle the ``**kwargs``
+    parameter.
+
+.. method:: DjangoTestSuiteRunner.run_tests(test_labels, extra_tests=None, **kwargs)
+
+    Run the test suite.
 
     ``test_labels`` is a list of strings describing the tests to be run. A test
     label can take one of three forms:
@@ -1223,21 +1407,68 @@ requirement is that it has the same arguments as the Django test runner:
     If ``test_labels`` has a value of ``None``, the test runner should run
     search for tests in all the applications in :setting:`INSTALLED_APPS`.
 
-    ``verbosity`` determines the amount of notification and debug information
-    that will be printed to the console; ``0`` is no output, ``1`` is normal
-    output, and ``2`` is verbose output.
+    ``extra_tests`` is a list of extra ``TestCase`` instances to add to the
+    suite that is executed by the test runner. These extra tests are run
+    in addition to those discovered in the modules listed in ``test_labels``.
 
-    If ``interactive`` is ``True``, the test suite has permission to ask the
-    user for instructions when the test suite is executed. An example of this
-    behavior would be asking for permission to delete an existing test
-    database. If ``interactive`` is ``False``, the test suite must be able to
-    run without any manual intervention.
+    This method should return the number of tests that failed.
+
+.. method:: DjangoTestSuiteRunner.setup_test_environment(**kwargs)
+
+    Sets up the test environment ready for testing.
+
+.. method:: DjangoTestSuiteRunner.build_suite(test_labels, extra_tests=None, **kwargs)
+
+    Constructs a test suite that matches the test labels provided.
+
+    ``test_labels`` is a list of strings describing the tests to be run. A test
+    label can take one of three forms:
+
+        * ``app.TestCase.test_method`` -- Run a single test method in a test
+          case.
+        * ``app.TestCase`` -- Run all the test methods in a test case.
+        * ``app`` -- Search for and run all tests in the named application.
+
+    If ``test_labels`` has a value of ``None``, the test runner should run
+    search for tests in all the applications in :setting:`INSTALLED_APPS`.
 
     ``extra_tests`` is a list of extra ``TestCase`` instances to add to the
     suite that is executed by the test runner. These extra tests are run
-    in addition to those discovered in the modules listed in ``module_list``.
+    in addition to those discovered in the modules listed in ``test_labels``.
 
-    This method should return the number of tests that failed.
+    Returns a ``TestSuite`` instance ready to be run.
+
+.. method:: DjangoTestSuiteRunner.setup_databases(**kwargs)
+
+    Creates the test databases.
+
+    Returns a data structure that provides enough detail to undo the changes
+    that have been made. This data will be provided to the ``teardown_databases()``
+    function at the conclusion of testing.
+
+.. method:: DjangoTestSuiteRunner.run_suite(suite, **kwargs)
+
+    Runs the test suite.
+
+    Returns the result produced by the running the test suite.
+
+.. method:: DjangoTestSuiteRunner.teardown_databases(old_config, **kwargs)
+
+    Destroys the test databases, restoring pre-test conditions.
+
+    ``old_config`` is a data structure defining the changes in the
+    database configuration that need to be reversed. It is the return
+    value of the ``setup_databases()`` method.
+
+.. method:: DjangoTestSuiteRunner.teardown_test_environment(**kwargs)
+
+    Restores the pre-test environment.
+
+.. method:: DjangoTestSuiteRunner.suite_result(suite, result, **kwargs)
+
+    Computes and returns a return code based on a test suite, and the result
+	from that test suite.
+
 
 Testing utilities
 -----------------
@@ -1251,16 +1482,17 @@ utility methods in the ``django.test.utils`` module.
 .. function:: setup_test_environment()
 
     Performs any global pre-test setup, such as the installing the
-    instrumentation of the template rendering system and setting up the dummy
-    ``SMTPConnection``.
+    instrumentation of the template rendering system and setting up
+    the dummy ``SMTPConnection``.
 
 .. function:: teardown_test_environment()
 
-    Performs any global post-test teardown, such as removing the black magic
-    hooks into the template system and restoring normal e-mail services.
+    Performs any global post-test teardown, such as removing the black
+    magic hooks into the template system and restoring normal e-mail
+    services.
 
-The creation module of the database backend (``connection.creation``) also
-provides some utilities that can be useful during testing.
+The creation module of the database backend (``connection.creation``)
+also provides some utilities that can be useful during testing.
 
 .. function:: create_test_db(verbosity=1, autoclobber=False)
 
@@ -1268,27 +1500,29 @@ provides some utilities that can be useful during testing.
 
     ``verbosity`` has the same behavior as in ``run_tests()``.
 
-    ``autoclobber`` describes the behavior that will occur if a database with
-    the same name as the test database is discovered:
+    ``autoclobber`` describes the behavior that will occur if a
+    database with the same name as the test database is discovered:
 
-        * If ``autoclobber`` is ``False``, the user will be asked to approve
-          destroying the existing database. ``sys.exit`` is called if the user
-          does not approve.
+        * If ``autoclobber`` is ``False``, the user will be asked to
+          approve destroying the existing database. ``sys.exit`` is
+          called if the user does not approve.
 
-        * If autoclobber is ``True``, the database will be destroyed without
-          consulting the user.
+        * If autoclobber is ``True``, the database will be destroyed
+          without consulting the user.
 
     Returns the name of the test database that it created.
 
-    ``create_test_db()`` has the side effect of modifying
-    ``settings.DATABASE_NAME`` to match the name of the test database.
+    ``create_test_db()`` has the side effect of modifying the value of
+    :setting:`NAME` in :setting:`DATABASES` to match the name of the test
+    database.
 
     .. versionchanged:: 1.0
        ``create_test_db()`` now returns the name of the test database.
 
 .. function:: destroy_test_db(old_database_name, verbosity=1)
 
-    Destroys the database whose name is in the :setting:`DATABASE_NAME` setting
-    and restores the value of :setting:`DATABASE_NAME` to the provided name.
+    Destroys the database whose name is in stored in :setting:`NAME` in the
+    :setting:`DATABASES`, and sets :setting:`NAME` to use the
+    provided name.
 
     ``verbosity`` has the same behavior as in ``run_tests()``.

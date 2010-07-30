@@ -1,13 +1,8 @@
 # coding: utf-8
 import pickle
 
-from django.db import connection, models
+from django.db import connection, models, DEFAULT_DB_ALIAS
 from django.conf import settings
-
-try:
-    sorted
-except NameError:
-    from django.utils.itercompat import sorted      # For Python 2.3
 
 class Author(models.Model):
     name = models.CharField(max_length=100)
@@ -97,19 +92,19 @@ __test__ = {'API_TESTS': """
 {'pages__sum': 3703}
 
 # Annotations get combined with extra select clauses
->>> sorted(Book.objects.all().annotate(mean_auth_age=Avg('authors__age')).extra(select={'manufacture_cost' : 'price * .5'}).get(pk=2).__dict__.items())
+>>> sorted((k,v) for k,v in Book.objects.all().annotate(mean_auth_age=Avg('authors__age')).extra(select={'manufacture_cost' : 'price * .5'}).get(pk=2).__dict__.items() if k != '_state')
 [('contact_id', 3), ('id', 2), ('isbn', u'067232959'), ('manufacture_cost', ...11.545...), ('mean_auth_age', 45.0), ('name', u'Sams Teach Yourself Django in 24 Hours'), ('pages', 528), ('price', Decimal("23.09")), ('pubdate', datetime.date(2008, 3, 3)), ('publisher_id', 2), ('rating', 3.0)]
 
 # Order of the annotate/extra in the query doesn't matter
->>> sorted(Book.objects.all().extra(select={'manufacture_cost' : 'price * .5'}).annotate(mean_auth_age=Avg('authors__age')).get(pk=2).__dict__.items())
+>>> sorted((k,v) for k,v in Book.objects.all().extra(select={'manufacture_cost' : 'price * .5'}).annotate(mean_auth_age=Avg('authors__age')).get(pk=2).__dict__.items()if k != '_state')
 [('contact_id', 3), ('id', 2), ('isbn', u'067232959'), ('manufacture_cost', ...11.545...), ('mean_auth_age', 45.0), ('name', u'Sams Teach Yourself Django in 24 Hours'), ('pages', 528), ('price', Decimal("23.09")), ('pubdate', datetime.date(2008, 3, 3)), ('publisher_id', 2), ('rating', 3.0)]
 
 # Values queries can be combined with annotate and extra
->>> sorted(Book.objects.all().annotate(mean_auth_age=Avg('authors__age')).extra(select={'manufacture_cost' : 'price * .5'}).values().get(pk=2).items())
+>>> sorted((k,v) for k,v in Book.objects.all().annotate(mean_auth_age=Avg('authors__age')).extra(select={'manufacture_cost' : 'price * .5'}).values().get(pk=2).items()if k != '_state')
 [('contact_id', 3), ('id', 2), ('isbn', u'067232959'), ('manufacture_cost', ...11.545...), ('mean_auth_age', 45.0), ('name', u'Sams Teach Yourself Django in 24 Hours'), ('pages', 528), ('price', Decimal("23.09")), ('pubdate', datetime.date(2008, 3, 3)), ('publisher_id', 2), ('rating', 3.0)]
 
 # The order of the (empty) values, annotate and extra clauses doesn't matter
->>> sorted(Book.objects.all().values().annotate(mean_auth_age=Avg('authors__age')).extra(select={'manufacture_cost' : 'price * .5'}).get(pk=2).items())
+>>> sorted((k,v) for k,v in Book.objects.all().values().annotate(mean_auth_age=Avg('authors__age')).extra(select={'manufacture_cost' : 'price * .5'}).get(pk=2).items()if k != '_state')
 [('contact_id', 3), ('id', 2), ('isbn', u'067232959'), ('manufacture_cost', ...11.545...), ('mean_auth_age', 45.0), ('name', u'Sams Teach Yourself Django in 24 Hours'), ('pages', 528), ('price', Decimal("23.09")), ('pubdate', datetime.date(2008, 3, 3)), ('publisher_id', 2), ('rating', 3.0)]
 
 # If the annotation precedes the values clause, it won't be included
@@ -174,8 +169,8 @@ FieldError: Cannot resolve keyword 'foo' into field. Choices are: authors, conta
 {'number': 1132, 'select': 1132}
 
 # Regression for #10064: select_related() plays nice with aggregates
->>> Book.objects.select_related('publisher').annotate(num_authors=Count('authors')).values()[0]
-{'rating': 4.0, 'isbn': u'013790395', 'name': u'Artificial Intelligence: A Modern Approach', 'pubdate': datetime.date(1995, 1, 15), 'price': Decimal("82.8..."), 'contact_id': 8, 'id': 5, 'num_authors': 2, 'publisher_id': 3, 'pages': 1132}
+>>> sorted(Book.objects.select_related('publisher').annotate(num_authors=Count('authors')).values()[0].iteritems())
+[('contact_id', 8), ('id', 5), ('isbn', u'013790395'), ('name', u'Artificial Intelligence: A Modern Approach'), ('num_authors', 2), ('pages', 1132), ('price', Decimal("82.8...")), ('pubdate', datetime.date(1995, 1, 15)), ('publisher_id', 3), ('rating', 4.0)]
 
 # Regression for #10010: exclude on an aggregate field is correctly negated
 >>> len(Book.objects.annotate(num_authors=Count('authors')))
@@ -219,8 +214,8 @@ FieldError: Cannot resolve keyword 'foo' into field. Choices are: authors, conta
 >>> Book.objects.filter(id__in=[]).aggregate(num_authors=Count('authors'), avg_authors=Avg('authors'), max_authors=Max('authors'), max_price=Max('price'), max_rating=Max('rating'))
 {'max_authors': None, 'max_rating': None, 'num_authors': 0, 'avg_authors': None, 'max_price': None}
 
->>> Publisher.objects.filter(pk=5).annotate(num_authors=Count('book__authors'), avg_authors=Avg('book__authors'), max_authors=Max('book__authors'), max_price=Max('book__price'), max_rating=Max('book__rating')).values()
-[{'max_authors': None, 'name': u"Jonno's House of Books", 'num_awards': 0, 'max_price': None, 'num_authors': 0, 'max_rating': None, 'id': 5, 'avg_authors': None}]
+>>> list(Publisher.objects.filter(pk=5).annotate(num_authors=Count('book__authors'), avg_authors=Avg('book__authors'), max_authors=Max('book__authors'), max_price=Max('book__price'), max_rating=Max('book__rating')).values()) == [{'max_authors': None, 'name': u"Jonno's House of Books", 'num_awards': 0, 'max_price': None, 'num_authors': 0, 'max_rating': None, 'id': 5, 'avg_authors': None}]
+True
 
 # Regression for #10113 - Fields mentioned in order_by() must be included in the GROUP BY.
 # This only becomes a problem when the order_by introduces a new join.
@@ -250,10 +245,10 @@ FieldError: Cannot resolve keyword 'foo' into field. Choices are: authors, conta
 >>> out = pickle.dumps(qs)
 
 # Then check that the round trip works.
->>> query = qs.query.as_sql()[0]
+>>> query = qs.query.get_compiler(qs.db).as_sql()[0]
 >>> select_fields = qs.query.select_fields
 >>> query2 = pickle.loads(pickle.dumps(qs))
->>> query2.query.as_sql()[0] == query
+>>> query2.query.get_compiler(query2.db).as_sql()[0] == query
 True
 >>> query2.query.select_fields = select_fields
 
@@ -327,7 +322,7 @@ def run_stddev_tests():
     Stddev and Variance are not guaranteed to be available for SQLite, and
     are not available for PostgreSQL before 8.2.
     """
-    if settings.DATABASE_ENGINE == 'sqlite3':
+    if settings.DATABASES[DEFAULT_DB_ALIAS]['ENGINE'] == 'django.db.backends.sqlite3':
         return False
 
     class StdDevPop(object):
@@ -379,6 +374,5 @@ if run_stddev_tests():
 
 >>> Book.objects.aggregate(Variance('price', sample=True))
 {'price__variance': 700.53...}
-
 
 """
