@@ -21,9 +21,9 @@ middleware to set the ``ETag`` header.
 When the client next requests the same resource, it might send along a header
 such as `If-modified-since`_, containing the date of the last modification
 time it was sent, or `If-none-match`_, containing the ``ETag`` it was sent.
-If there is no match with the ETag, or if the resource has not been modified,
-a 304 status code can be sent back, instead of a full response, telling the
-client that nothing has changed.
+If the current version of the page matches the ``ETag`` sent by the client, or
+if the resource has not been modified, a 304 status code can be sent back,
+instead of a full response, telling the client that nothing has changed.
 
 .. _If-none-match: http://www.w3.org/Protocols/rfc2616/rfc2616-sec14.html#sec14.26
 .. _If-modified-since: http://www.w3.org/Protocols/rfc2616/rfc2616-sec14.html#sec14.25
@@ -94,13 +94,6 @@ for your front page view::
     @condition(last_modified_func=latest_entry)
     def front_page(request, blog_id):
         ...
-
-Of course, if you're using Python 2.3 or prefer not to use the decorator
-syntax, you can write the same code as follows, there is no difference::
-
-    def front_page(request, blog_id):
-        ...
-    front_page = condition(last_modified_func=latest_entry)(front_page)
 
 Shortcuts for only computing one value
 ======================================

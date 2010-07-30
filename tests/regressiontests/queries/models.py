@@ -5,16 +5,12 @@ Various complex queries that have been problematic in the past.
 import datetime
 import pickle
 import sys
+import threading
 
 from django.conf import settings
-from django.db import models
-from django.db.models.query import Q, ITER_CHUNK_SIZE
-
-# Python 2.3 doesn't have sorted()
-try:
-    sorted
-except NameError:
-    from django.utils.itercompat import sorted
+from django.db import models, DEFAULT_DB_ALIAS
+from django.db.models import Count
+from django.db.models.query import Q, ITER_CHUNK_SIZE, EmptyQuerySet
 
 class DumbCategory(models.Model):
     pass
@@ -44,6 +40,13 @@ class Note(models.Model):
     def __unicode__(self):
         return self.note
 
+    def __init__(self, *args, **kwargs):
+        super(Note, self).__init__(*args, **kwargs)
+        # Regression for #13227 -- having an attribute that
+        # is unpickleable doesn't stop you from cloning queries
+        # that use objects of that type as an argument.
+        self.lock = threading.Lock()
+
 class Annotation(models.Model):
     name = models.CharField(max_length=10)
     tag = models.ForeignKey(Tag)
@@ -66,6 +69,9 @@ class Author(models.Model):
     name = models.CharField(max_length=10)
     num = models.IntegerField(unique=True)
     extra = models.ForeignKey(ExtraInfo)
+
+    class Meta:
+        ordering = ['name']
 
     def __unicode__(self):
         return self.name
@@ -273,6 +279,16 @@ class Plaything(models.Model):
 
 
 __test__ = {'API_TESTS':"""
+>>> # Regression for #13156 -- exists() queries have minimal SQL
+>>> from django.db import connection
+>>> settings.DEBUG = True
+>>> Tag.objects.exists()
+False
+>>> # Ok - so the exist query worked - but did it include too many columns?
+>>> "id" not in connection.queries[-1]['sql'] and "name" not in connection.queries[-1]['sql']
+True
+>>> settings.DEBUG = False
+
 >>> generic = NamedCategory.objects.create(name="Generic")
 >>> t1 = Tag.objects.create(name='t1', category=generic)
 >>> t2 = Tag.objects.create(name='t2', parent=t1, category=generic)
@@ -280,9 +296,9 @@ __test__ = {'API_TESTS':"""
 >>> t4 = Tag.objects.create(name='t4', parent=t3)
 >>> t5 = Tag.objects.create(name='t5', parent=t3)
 
->>> n1 = Note.objects.create(note='n1', misc='foo')
->>> n2 = Note.objects.create(note='n2', misc='bar')
->>> n3 = Note.objects.create(note='n3', misc='foo')
+>>> n1 = Note.objects.create(note='n1', misc='foo', id=1)
+>>> n2 = Note.objects.create(note='n2', misc='bar', id=2)
+>>> n3 = Note.objects.create(note='n3', misc='foo', id=3)
 
 >>> ann1 = Annotation.objects.create(name='a1', tag=t1)
 >>> ann1.notes.add(n1)
@@ -413,6 +429,45 @@ constraints.
 []
 >>> Number.objects.filter(Q(num__gt=7) & Q(num__lt=12) | Q(num__lt=4))
 [<Number: 8>]
+
+Bug #12239
+Float was being rounded to integer on gte queries on integer field.  Tests
+show that gt, lt, gte, and lte work as desired.  Note that the fix changes
+get_prep_lookup for gte and lt queries only.
+>>> Number.objects.filter(num__gt=11.9)
+[<Number: 12>]
+>>> Number.objects.filter(num__gt=12)
+[]
+>>> Number.objects.filter(num__gt=12.0)
+[]
+>>> Number.objects.filter(num__gt=12.1)
+[]
+>>> Number.objects.filter(num__lt=12)
+[<Number: 4>, <Number: 8>]
+>>> Number.objects.filter(num__lt=12.0)
+[<Number: 4>, <Number: 8>]
+>>> Number.objects.filter(num__lt=12.1)
+[<Number: 4>, <Number: 8>, <Number: 12>]
+>>> Number.objects.filter(num__gte=11.9)
+[<Number: 12>]
+>>> Number.objects.filter(num__gte=12)
+[<Number: 12>]
+>>> Number.objects.filter(num__gte=12.0)
+[<Number: 12>]
+>>> Number.objects.filter(num__gte=12.1)
+[]
+>>> Number.objects.filter(num__gte=12.9)
+[]
+>>> Number.objects.filter(num__lte=11.9)
+[<Number: 4>, <Number: 8>]
+>>> Number.objects.filter(num__lte=12)
+[<Number: 4>, <Number: 8>, <Number: 12>]
+>>> Number.objects.filter(num__lte=12.0)
+[<Number: 4>, <Number: 8>, <Number: 12>]
+>>> Number.objects.filter(num__lte=12.1)
+[<Number: 4>, <Number: 8>, <Number: 12>]
+>>> Number.objects.filter(num__lte=12.9)
+[<Number: 4>, <Number: 8>, <Number: 12>]
 
 Bug #7872
 Another variation on the disjunctive filtering theme.
@@ -752,9 +807,19 @@ Bug #6180, #6203 -- dates with limits and/or counts
 >>> Item.objects.dates('created', 'day')[0]
 datetime.datetime(2007, 12, 19, 0, 0)
 
-Bug #7087 -- dates with extra select columns
+Bug #7087/#12242 -- dates with extra select columns
 >>> Item.objects.dates('created', 'day').extra(select={'a': 1})
 [datetime.datetime(2007, 12, 19, 0, 0), datetime.datetime(2007, 12, 20, 0, 0)]
+
+>>> Item.objects.extra(select={'a': 1}).dates('created', 'day')
+[datetime.datetime(2007, 12, 19, 0, 0), datetime.datetime(2007, 12, 20, 0, 0)]
+
+>>> name="one"
+>>> Item.objects.dates('created', 'day').extra(where=['name=%s'], params=[name])
+[datetime.datetime(2007, 12, 19, 0, 0)]
+
+>>> Item.objects.extra(where=['name=%s'], params=[name]).dates('created', 'day')
+[datetime.datetime(2007, 12, 19, 0, 0)]
 
 Bug #7155 -- nullable dates
 >>> Item.objects.dates('modified', 'day')
@@ -809,8 +874,8 @@ We can do slicing beyond what is currently in the result cache, too.
 
 Bug #7045 -- extra tables used to crash SQL construction on the second use.
 >>> qs = Ranking.objects.extra(tables=['django_site'])
->>> s = qs.query.as_sql()
->>> s = qs.query.as_sql()   # test passes if this doesn't raise an exception.
+>>> s = qs.query.get_compiler(qs.db).as_sql()
+>>> s = qs.query.get_compiler(qs.db).as_sql()   # test passes if this doesn't raise an exception.
 
 Bug #7098 -- Make sure semi-deprecated ordering by related models syntax still
 works.
@@ -899,9 +964,9 @@ We should also be able to pickle things that use select_related(). The only
 tricky thing here is to ensure that we do the related selections properly after
 unpickling.
 >>> qs = Item.objects.select_related()
->>> query = qs.query.as_sql()[0]
+>>> query = qs.query.get_compiler(qs.db).as_sql()[0]
 >>> query2 = pickle.loads(pickle.dumps(qs.query))
->>> query2.as_sql()[0] == query
+>>> query2.get_compiler(qs.db).as_sql()[0] == query
 True
 
 Check pickling of deferred-loading querysets
@@ -955,6 +1020,38 @@ Bug #7759 -- count should work with a partially read result set.
 ...     qs.count() == count
 ...     break
 True
+
+Bug #7235 -- an EmptyQuerySet should not raise exceptions if it is filtered.
+>>> q = EmptyQuerySet()
+>>> q.all()
+[]
+>>> q.filter(x=10)
+[]
+>>> q.exclude(y=3)
+[]
+>>> q.complex_filter({'pk': 1})
+[]
+>>> q.select_related('spam', 'eggs')
+[]
+>>> q.annotate(Count('eggs'))
+[]
+>>> q.order_by('-pub_date', 'headline')
+[]
+>>> q.distinct()
+[]
+>>> q.extra(select={'is_recent': "pub_date > '2006-01-01'"})
+[]
+>>> q.query.low_mark = 1
+>>> q.extra(select={'is_recent': "pub_date > '2006-01-01'"})
+Traceback (most recent call last):
+...
+AssertionError: Cannot change a query once a slice has been taken
+>>> q.reverse()
+[]
+>>> q.defer('spam', 'eggs')
+[]
+>>> q.only('spam', 'eggs')
+[]
 
 Bug #7791 -- there were "issues" when ordering and distinct-ing on fields
 related via ForeignKeys.
@@ -1038,7 +1135,7 @@ sufficient that this query runs without error.
 Calling order_by() with no parameters removes any existing ordering on the
 model. But it should still be possible to add new ordering after that.
 >>> qs = Author.objects.order_by().order_by('name')
->>> 'ORDER BY' in qs.query.as_sql()[0]
+>>> 'ORDER BY' in qs.query.get_compiler(qs.db).as_sql()[0]
 True
 
 Incorrect SQL was being generated for certain types of exclude() queries that
@@ -1072,7 +1169,8 @@ performance problems on backends like MySQL.
 
 Nested queries should not evaluate the inner query as part of constructing the
 SQL (so we should see a nested query here, indicated by two "SELECT" calls).
->>> Annotation.objects.filter(notes__in=Note.objects.filter(note="xyzzy")).query.as_sql()[0].count('SELECT')
+>>> qs = Annotation.objects.filter(notes__in=Note.objects.filter(note="xyzzy"))
+>>> qs.query.get_compiler(qs.db).as_sql()[0].count('SELECT')
 2
 
 Bug #10181 -- Avoid raising an EmptyResultSet if an inner query is provably
@@ -1175,12 +1273,12 @@ True
 
 """}
 
-# In Python 2.3 and the Python 2.6 beta releases, exceptions raised in __len__
+# In Python 2.6 beta releases, exceptions raised in __len__
 # are swallowed (Python issue 1242657), so these cases return an empty list,
 # rather than raising an exception. Not a lot we can do about that,
 # unfortunately, due to the way Python handles list() calls internally. Thus,
-# we skip the tests for Python 2.3 and 2.6.
-if (2, 4) <= sys.version_info < (2, 6):
+# we skip the tests for Python 2.6.
+if sys.version_info < (2, 6):
     __test__["API_TESTS"] += """
 # If you're not careful, it's possible to introduce infinite loops via default
 # ordering on foreign keys in a cycle. We detect that.
@@ -1209,20 +1307,20 @@ FieldError: Infinite loop caused by ordering.
 
 
 # In Oracle, we expect a null CharField to return u'' instead of None.
-if settings.DATABASE_ENGINE == "oracle":
+if settings.DATABASES[DEFAULT_DB_ALIAS]['ENGINE'] == "django.db.backends.oracle":
     __test__["API_TESTS"] = __test__["API_TESTS"].replace("<NONE_OR_EMPTY_UNICODE>", "u''")
 else:
     __test__["API_TESTS"] = __test__["API_TESTS"].replace("<NONE_OR_EMPTY_UNICODE>", "None")
 
 
-if settings.DATABASE_ENGINE == "mysql":
+if settings.DATABASES[DEFAULT_DB_ALIAS]['ENGINE'] == "django.db.backends.mysql":
     __test__["API_TESTS"] += """
 When grouping without specifying ordering, we add an explicit "ORDER BY NULL"
 portion in MySQL to prevent unnecessary sorting.
 
 >>> query = Tag.objects.values_list('parent_id', flat=True).order_by().query
 >>> query.group_by = ['parent_id']
->>> sql = query.as_sql()[0]
+>>> sql = query.get_compiler(DEFAULT_DB_ALIAS).as_sql()[0]
 >>> fragment = "ORDER BY "
 >>> pos = sql.find(fragment)
 >>> sql.find(fragment, pos + 1) == -1

@@ -49,6 +49,7 @@ Optional arguments
                                   context_instance=RequestContext(request))
 
 ``mimetype``
+
     .. versionadded:: 1.0
 
     The MIME type to use for the resulting document. Defaults to the value of
@@ -147,7 +148,7 @@ will be returned::
 ``get_object_or_404``
 =====================
 
-.. function:: get_object_or_404(object, *args, **kwargs)
+.. function:: get_object_or_404(klass, *args, **kwargs)
 
    Calls :meth:`~django.db.models.QuerySet.get()` on a given model manager,
    but it raises ``django.http.Http404`` instead of the model's

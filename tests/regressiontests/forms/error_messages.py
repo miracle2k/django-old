@@ -6,8 +6,8 @@ tests = r"""
 # CharField ###################################################################
 
 >>> e = {'required': 'REQUIRED'}
->>> e['min_length'] = 'LENGTH %(length)s, MIN LENGTH %(min)s'
->>> e['max_length'] = 'LENGTH %(length)s, MAX LENGTH %(max)s'
+>>> e['min_length'] = 'LENGTH %(show_value)s, MIN LENGTH %(limit_value)s'
+>>> e['max_length'] = 'LENGTH %(show_value)s, MAX LENGTH %(limit_value)s'
 >>> f = CharField(min_length=5, max_length=10, error_messages=e)
 >>> f.clean('')
 Traceback (most recent call last):
@@ -26,8 +26,8 @@ ValidationError: [u'LENGTH 11, MAX LENGTH 10']
 
 >>> e = {'required': 'REQUIRED'}
 >>> e['invalid'] = 'INVALID'
->>> e['min_value'] = 'MIN VALUE IS %s'
->>> e['max_value'] = 'MAX VALUE IS %s'
+>>> e['min_value'] = 'MIN VALUE IS %(limit_value)s'
+>>> e['max_value'] = 'MAX VALUE IS %(limit_value)s'
 >>> f = IntegerField(min_value=5, max_value=10, error_messages=e)
 >>> f.clean('')
 Traceback (most recent call last):
@@ -50,8 +50,8 @@ ValidationError: [u'MAX VALUE IS 10']
 
 >>> e = {'required': 'REQUIRED'}
 >>> e['invalid'] = 'INVALID'
->>> e['min_value'] = 'MIN VALUE IS %s'
->>> e['max_value'] = 'MAX VALUE IS %s'
+>>> e['min_value'] = 'MIN VALUE IS %(limit_value)s'
+>>> e['max_value'] = 'MAX VALUE IS %(limit_value)s'
 >>> f = FloatField(min_value=5, max_value=10, error_messages=e)
 >>> f.clean('')
 Traceback (most recent call last):
@@ -74,8 +74,8 @@ ValidationError: [u'MAX VALUE IS 10']
 
 >>> e = {'required': 'REQUIRED'}
 >>> e['invalid'] = 'INVALID'
->>> e['min_value'] = 'MIN VALUE IS %s'
->>> e['max_value'] = 'MAX VALUE IS %s'
+>>> e['min_value'] = 'MIN VALUE IS %(limit_value)s'
+>>> e['max_value'] = 'MAX VALUE IS %(limit_value)s'
 >>> e['max_digits'] = 'MAX DIGITS IS %s'
 >>> e['max_decimal_places'] = 'MAX DP IS %s'
 >>> e['max_whole_digits'] = 'MAX DIGITS BEFORE DP IS %s'
@@ -156,8 +156,8 @@ ValidationError: [u'INVALID']
 
 >>> e = {'required': 'REQUIRED'}
 >>> e['invalid'] = 'INVALID'
->>> e['min_length'] = 'LENGTH %(length)s, MIN LENGTH %(min)s'
->>> e['max_length'] = 'LENGTH %(length)s, MAX LENGTH %(max)s'
+>>> e['min_length'] = 'LENGTH %(show_value)s, MIN LENGTH %(limit_value)s'
+>>> e['max_length'] = 'LENGTH %(show_value)s, MAX LENGTH %(limit_value)s'
 >>> f = RegexField(r'^\d+$', min_length=5, max_length=10, error_messages=e)
 >>> f.clean('')
 Traceback (most recent call last):
@@ -180,8 +180,8 @@ ValidationError: [u'LENGTH 11, MAX LENGTH 10']
 
 >>> e = {'required': 'REQUIRED'}
 >>> e['invalid'] = 'INVALID'
->>> e['min_length'] = 'LENGTH %(length)s, MIN LENGTH %(min)s'
->>> e['max_length'] = 'LENGTH %(length)s, MAX LENGTH %(max)s'
+>>> e['min_length'] = 'LENGTH %(show_value)s, MIN LENGTH %(limit_value)s'
+>>> e['max_length'] = 'LENGTH %(show_value)s, MAX LENGTH %(limit_value)s'
 >>> f = EmailField(min_length=8, max_length=10, error_messages=e)
 >>> f.clean('')
 Traceback (most recent call last):
@@ -358,4 +358,42 @@ ValidationError: [u'NOT A LIST OF VALUES']
 Traceback (most recent call last):
 ...
 ValidationError: [u'4 IS INVALID CHOICE']
+
+# Subclassing ErrorList #######################################################
+
+>>> from django.utils.safestring import mark_safe
+>>>
+>>> class TestForm(Form):
+...      first_name = CharField()
+...      last_name = CharField()
+...      birthday = DateField()
+...
+...      def clean(self):
+...          raise ValidationError("I like to be awkward.")
+...
+>>> class CustomErrorList(util.ErrorList):
+...      def __unicode__(self):
+...          return self.as_divs()
+...      def as_divs(self):
+...          if not self: return u''
+...          return mark_safe(u'<div class="error">%s</div>'
+...                    % ''.join([u'<p>%s</p>' % e for e in self]))
+...
+
+This form should print errors the default way.
+
+>>> form1 = TestForm({'first_name': 'John'})
+>>> print form1['last_name'].errors
+<ul class="errorlist"><li>This field is required.</li></ul>
+>>> print form1.errors['__all__']
+<ul class="errorlist"><li>I like to be awkward.</li></ul>
+
+This one should wrap error groups in the customized way.
+
+>>> form2 = TestForm({'first_name': 'John'}, error_class=CustomErrorList)
+>>> print form2['last_name'].errors
+<div class="error"><p>This field is required.</p></div>
+>>> print form2.errors['__all__']
+<div class="error"><p>I like to be awkward.</p></div>
+
 """

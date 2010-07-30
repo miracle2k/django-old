@@ -102,7 +102,7 @@ These files are:
       contents" of your Django-powered site. You can read more about URLs in
       :ref:`topics-http-urls`.
 
-.. _more about packages: http://docs.python.org/tut/node8.html#packages
+.. _more about packages: http://docs.python.org/tutorial/modules.html#packages
 
 The development server
 ----------------------
@@ -158,34 +158,40 @@ It worked!
 Database setup
 --------------
 
-Now, edit :file:`settings.py`. It's a normal Python module with module-level
-variables representing Django settings. Change these settings to match your
-database's connection parameters:
+Now, edit :file:`settings.py`. It's a normal Python module with
+module-level variables representing Django settings. Change the
+following keys in the :setting:`DATABASES` ``'default'`` item to match
+your databases connection settings.
 
-    * :setting:`DATABASE_ENGINE` -- Either 'postgresql_psycopg2', 'mysql' or
-      'sqlite3'. Other backends are :setting:`also available <DATABASE_ENGINE>`.
+    * :setting:`ENGINE` -- Either
+      ``'django.db.backends.postgresql_psycopg2'``,
+      ``'django.db.backends.mysql'`` or
+      ``'django.db.backends.sqlite3'``. Other backends are
+      :setting:`also available <ENGINE>`.
 
-    * :setting:`DATABASE_NAME` -- The name of your database. If you're using
-      SQLite, the database will be a file on your computer; in that case,
-      ``DATABASE_NAME`` should be the full absolute path, including filename, of
-      that file. If the file doesn't exist, it will automatically be created
-      when you synchronize the database for the first time (see below).
+    * :setting:`NAME` -- The name of your database. If you're using
+      SQLite, the database will be a file on your computer; in that
+      case, :setting:`NAME` should be the full absolute path,
+      including filename, of that file. If the file doesn't exist, it
+      will automatically be created when you synchronize the database
+      for the first time (see below).
 
-      When specifying the path, always use forward slashes, even on Windows
-      (e.g. ``C:/homes/user/mysite/sqlite3.db``).
+      When specifying the path, always use forward slashes, even on
+      Windows (e.g. ``C:/homes/user/mysite/sqlite3.db``).
 
-    * :setting:`DATABASE_USER` -- Your database username (not used for SQLite).
+    * :setting:`USER` -- Your database username (not used for SQLite).
 
-    * :setting:`DATABASE_PASSWORD` -- Your database password (not used for
+    * :setting:`PASSWORD` -- Your database password (not used for
       SQLite).
 
-    * :setting:`DATABASE_HOST` -- The host your database is on. Leave this as an
-      empty string if your database server is on the same physical machine (not
-      used for SQLite).
+    * :setting:`HOST` -- The host your database is on. Leave this as
+      an empty string if your database server is on the same physical
+      machine (not used for SQLite).
 
-If you're new to databases, we recommend simply using SQLite (by setting
-:setting:`DATABASE_ENGINE` to ``'sqlite3'``). SQLite is included as part of
-Python 2.5 and later, so you won't need to install anything else.
+If you're new to databases, we recommend simply using SQLite (by
+setting :setting:`ENGINE` to ``'django.db.backends.sqlite3'``). SQLite
+is included as part of Python 2.5 and later, so you won't need to
+install anything else.
 
 .. note::
 
@@ -281,6 +287,7 @@ That'll create a directory :file:`polls`, which is laid out like this::
     polls/
         __init__.py
         models.py
+        tests.py
         views.py
 
 This directory structure will house the poll application.
@@ -313,22 +320,6 @@ These concepts are represented by simple Python classes. Edit the
         choice = models.CharField(max_length=200)
         votes = models.IntegerField()
 
-.. admonition:: Errors about :attr:`~django.db.models.Field.max_length`
-
-   If Django gives you an error message saying that
-   :attr:`~django.db.models.Field.max_length` is not a valid argument, you're
-   most likely using an old version of Django. (This version of the tutorial is
-   written for the latest development version of Django.) If you're using a
-   Subversion checkout of Django's development version (see :ref:`the
-   installation docs <topics-install>` for more information), you shouldn't have
-   any problems.
-
-   If you want to stick with an older version of Django, you'll want to switch
-   to `the Django 0.96 tutorial`_, because this tutorial covers several features
-   that only exist in the Django development version.
-
-.. _the Django 0.96 tutorial: http://www.djangoproject.com/documentation/0.96/tutorial01/
-
 The code is straightforward. Each model is represented by a class that
 subclasses :class:`django.db.models.Model`. Each model has a number of class
 variables, each of which represents a database field in the model.
@@ -360,7 +351,7 @@ Finally, note a relationship is defined, using
 to a single Poll. Django supports all the common database relationships:
 many-to-ones, many-to-manys and one-to-ones.
 
-.. _`Python path`: http://docs.python.org/tut/node8.html#SECTION008110000000000000000
+.. _`Python path`: http://docs.python.org/tutorial/modules.html#the-module-search-path
 
 Activating models
 =================
@@ -643,8 +634,7 @@ Save these changes and start a new Python interactive shell by running
     >>> Poll.objects.filter(question__startswith='What')
     [<Poll: What's up?>]
 
-    # Get the poll whose year is 2007. Of course, if you're going through this
-    # tutorial in another year, change as appropriate.
+    # Get the poll whose year is 2007.
     >>> Poll.objects.get(pub_date__year=2007)
     <Poll: What's up?>
 
@@ -666,8 +656,16 @@ Save these changes and start a new Python interactive shell by running
 
     # Give the Poll a couple of Choices. The create call constructs a new
     # choice object, does the INSERT statement, adds the choice to the set
-    # of available choices and returns the new Choice object.
+    # of available choices and returns the new Choice object. Django creates
+    # a set to hold the "other side" of a ForeignKey relation
+    # (e.g. a poll's choices) which can be accessed via the API.
     >>> p = Poll.objects.get(pk=1)
+
+    # Display any choices from the related object set -- none so far.
+    >>> p.choice_set.all()
+    []
+
+    # Create three choices.
     >>> p.choice_set.create(choice='Not much', votes=0)
     <Choice: Not much>
     >>> p.choice_set.create(choice='The sky', votes=0)
@@ -695,8 +693,9 @@ Save these changes and start a new Python interactive shell by running
     >>> c = p.choice_set.filter(choice__startswith='Just hacking')
     >>> c.delete()
 
-For full details on the database API, see our :ref:`Database API reference
-<topics-db-queries>`.
+For more information on model relations, see :ref:`Accessing related objects
+<ref-models-relations>`. For full details on the database API, see our
+:ref:`Database API reference <topics-db-queries>`.
 
 When you're comfortable with the API, read :ref:`part 2 of this tutorial
 <intro-tutorial02>` to get Django's automatic admin working.

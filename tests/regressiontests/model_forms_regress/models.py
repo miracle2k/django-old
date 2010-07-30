@@ -1,5 +1,7 @@
 import os
 from django.db import models
+from django.core.exceptions import ValidationError
+
 
 class Person(models.Model):
     name = models.CharField(max_length=100)
@@ -37,3 +39,18 @@ class CustomFileField(models.FileField):
 
 class CustomFF(models.Model):
     f = CustomFileField(upload_to='unused', blank=True)
+
+class RealPerson(models.Model):
+    name = models.CharField(max_length=100)
+
+    def clean(self):
+        if self.name.lower() == 'anonymous':
+            raise ValidationError("Please specify a real name.")
+
+class Author(models.Model):
+    publication = models.OneToOneField(Publication, null=True, blank=True)
+    full_name = models.CharField(max_length=255)
+
+class Author1(models.Model):
+    publication = models.OneToOneField(Publication, null=False)
+    full_name = models.CharField(max_length=255)

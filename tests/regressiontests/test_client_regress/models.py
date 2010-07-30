@@ -10,6 +10,7 @@ from django.test.utils import ContextList
 from django.core.urlresolvers import reverse
 from django.core.exceptions import SuspiciousOperation
 from django.template import TemplateDoesNotExist, TemplateSyntaxError, Context
+from django.template import loader
 
 class AssertContainsTests(TestCase):
     def setUp(self):
@@ -31,39 +32,85 @@ class AssertContainsTests(TestCase):
         self.assertContains(response, 'twice', 2)
 
         try:
+            self.assertContains(response, 'text', status_code=999)
+        except AssertionError, e:
+            self.assertEquals(str(e), "Couldn't retrieve page: Response code was 200 (expected 999)")
+        try:
+            self.assertContains(response, 'text', status_code=999, msg_prefix='abc')
+        except AssertionError, e:
+            self.assertEquals(str(e), "abc: Couldn't retrieve page: Response code was 200 (expected 999)")
+
+        try:
+            self.assertNotContains(response, 'text', status_code=999)
+        except AssertionError, e:
+            self.assertEquals(str(e), "Couldn't retrieve page: Response code was 200 (expected 999)")
+        try:
+            self.assertNotContains(response, 'text', status_code=999, msg_prefix='abc')
+        except AssertionError, e:
+            self.assertEquals(str(e), "abc: Couldn't retrieve page: Response code was 200 (expected 999)")
+
+        try:
             self.assertNotContains(response, 'once')
         except AssertionError, e:
             self.assertEquals(str(e), "Response should not contain 'once'")
+        try:
+            self.assertNotContains(response, 'once', msg_prefix='abc')
+        except AssertionError, e:
+            self.assertEquals(str(e), "abc: Response should not contain 'once'")
 
         try:
             self.assertContains(response, 'never', 1)
         except AssertionError, e:
             self.assertEquals(str(e), "Found 0 instances of 'never' in response (expected 1)")
+        try:
+            self.assertContains(response, 'never', 1, msg_prefix='abc')
+        except AssertionError, e:
+            self.assertEquals(str(e), "abc: Found 0 instances of 'never' in response (expected 1)")
 
         try:
             self.assertContains(response, 'once', 0)
         except AssertionError, e:
             self.assertEquals(str(e), "Found 1 instances of 'once' in response (expected 0)")
+        try:
+            self.assertContains(response, 'once', 0, msg_prefix='abc')
+        except AssertionError, e:
+            self.assertEquals(str(e), "abc: Found 1 instances of 'once' in response (expected 0)")
 
         try:
             self.assertContains(response, 'once', 2)
         except AssertionError, e:
             self.assertEquals(str(e), "Found 1 instances of 'once' in response (expected 2)")
+        try:
+            self.assertContains(response, 'once', 2, msg_prefix='abc')
+        except AssertionError, e:
+            self.assertEquals(str(e), "abc: Found 1 instances of 'once' in response (expected 2)")
 
         try:
             self.assertContains(response, 'twice', 1)
         except AssertionError, e:
             self.assertEquals(str(e), "Found 2 instances of 'twice' in response (expected 1)")
+        try:
+            self.assertContains(response, 'twice', 1, msg_prefix='abc')
+        except AssertionError, e:
+            self.assertEquals(str(e), "abc: Found 2 instances of 'twice' in response (expected 1)")
 
         try:
             self.assertContains(response, 'thrice')
         except AssertionError, e:
             self.assertEquals(str(e), "Couldn't find 'thrice' in response")
+        try:
+            self.assertContains(response, 'thrice', msg_prefix='abc')
+        except AssertionError, e:
+            self.assertEquals(str(e), "abc: Couldn't find 'thrice' in response")
 
         try:
             self.assertContains(response, 'thrice', 3)
         except AssertionError, e:
             self.assertEquals(str(e), "Found 0 instances of 'thrice' in response (expected 3)")
+        try:
+            self.assertContains(response, 'thrice', 3, msg_prefix='abc')
+        except AssertionError, e:
+            self.assertEquals(str(e), "abc: Found 0 instances of 'thrice' in response (expected 3)")
 
     def test_unicode_contains(self):
         "Unicode characters can be found in template context"
@@ -78,6 +125,7 @@ class AssertContainsTests(TestCase):
         r = self.client.get('/test_client_regress/check_unicode/')
         self.assertNotContains(r, u'はたけ')
         self.assertNotContains(r, '\xe3\x81\xaf\xe3\x81\x9f\xe3\x81\x91'.decode('utf-8'))
+
 
 class AssertTemplateUsedTests(TestCase):
     fixtures = ['testdata.json']
@@ -94,20 +142,34 @@ class AssertTemplateUsedTests(TestCase):
         except AssertionError, e:
             self.assertEquals(str(e), "No templates used to render the response")
 
+        try:
+            self.assertTemplateUsed(response, 'GET Template', msg_prefix='abc')
+        except AssertionError, e:
+            self.assertEquals(str(e), "abc: No templates used to render the response")
+
     def test_single_context(self):
         "Template assertions work when there is a single context"
         response = self.client.get('/test_client/post_view/', {})
 
-        #
         try:
             self.assertTemplateNotUsed(response, 'Empty GET Template')
         except AssertionError, e:
             self.assertEquals(str(e), "Template 'Empty GET Template' was used unexpectedly in rendering the response")
 
         try:
+            self.assertTemplateNotUsed(response, 'Empty GET Template', msg_prefix='abc')
+        except AssertionError, e:
+            self.assertEquals(str(e), "abc: Template 'Empty GET Template' was used unexpectedly in rendering the response")
+
+        try:
             self.assertTemplateUsed(response, 'Empty POST Template')
         except AssertionError, e:
             self.assertEquals(str(e), "Template 'Empty POST Template' was not a template used to render the response. Actual template(s) used: Empty GET Template")
+
+        try:
+            self.assertTemplateUsed(response, 'Empty POST Template', msg_prefix='abc')
+        except AssertionError, e:
+            self.assertEquals(str(e), "abc: Template 'Empty POST Template' was not a template used to render the response. Actual template(s) used: Empty GET Template")
 
     def test_multiple_context(self):
         "Template assertions work when there are multiple contexts"
@@ -145,6 +207,11 @@ class AssertRedirectsTests(TestCase):
         except AssertionError, e:
             self.assertEquals(str(e), "Response didn't redirect as expected: Response code was 301 (expected 302)")
 
+        try:
+            self.assertRedirects(response, '/test_client/get_view/', msg_prefix='abc')
+        except AssertionError, e:
+            self.assertEquals(str(e), "abc: Response didn't redirect as expected: Response code was 301 (expected 302)")
+
     def test_lost_query(self):
         "An assertion is raised if the redirect location doesn't preserve GET parameters"
         response = self.client.get('/test_client/redirect_view/', {'var': 'value'})
@@ -152,6 +219,11 @@ class AssertRedirectsTests(TestCase):
             self.assertRedirects(response, '/test_client/get_view/')
         except AssertionError, e:
             self.assertEquals(str(e), "Response redirected to 'http://testserver/test_client/get_view/?var=value', expected 'http://testserver/test_client/get_view/'")
+
+        try:
+            self.assertRedirects(response, '/test_client/get_view/', msg_prefix='abc')
+        except AssertionError, e:
+            self.assertEquals(str(e), "abc: Response redirected to 'http://testserver/test_client/get_view/?var=value', expected 'http://testserver/test_client/get_view/'")
 
     def test_incorrect_target(self):
         "An assertion is raised if the response redirects to another target"
@@ -170,6 +242,12 @@ class AssertRedirectsTests(TestCase):
             self.assertRedirects(response, 'http://testserver/test_client/permanent_redirect_view/')
         except AssertionError, e:
             self.assertEquals(str(e), "Couldn't retrieve redirection page '/test_client/permanent_redirect_view/': response code was 301 (expected 200)")
+
+        try:
+            # The redirect target responds with a 301 code, not 200
+            self.assertRedirects(response, 'http://testserver/test_client/permanent_redirect_view/', msg_prefix='abc')
+        except AssertionError, e:
+            self.assertEquals(str(e), "abc: Couldn't retrieve redirection page '/test_client/permanent_redirect_view/': response code was 301 (expected 200)")
 
     def test_redirect_chain(self):
         "You can follow a redirect chain of multiple redirects"
@@ -262,6 +340,11 @@ class AssertRedirectsTests(TestCase):
         except AssertionError, e:
             self.assertEquals(str(e), "Response didn't redirect as expected: Response code was 200 (expected 302)")
 
+        try:
+            self.assertRedirects(response, '/test_client/get_view/', msg_prefix='abc')
+        except AssertionError, e:
+            self.assertEquals(str(e), "abc: Response didn't redirect as expected: Response code was 200 (expected 302)")
+
     def test_redirect_on_non_redirect_page(self):
         "An assertion is raised if the original page couldn't be retrieved as expected"
         # This page will redirect with code 301, not 302
@@ -270,6 +353,11 @@ class AssertRedirectsTests(TestCase):
             self.assertRedirects(response, '/test_client/get_view/')
         except AssertionError, e:
             self.assertEquals(str(e), "Response didn't redirect as expected: Response code was 200 (expected 302)")
+
+        try:
+            self.assertRedirects(response, '/test_client/get_view/', msg_prefix='abc')
+        except AssertionError, e:
+            self.assertEquals(str(e), "abc: Response didn't redirect as expected: Response code was 200 (expected 302)")
 
 
 class AssertFormErrorTests(TestCase):
@@ -290,6 +378,10 @@ class AssertFormErrorTests(TestCase):
             self.assertFormError(response, 'wrong_form', 'some_field', 'Some error.')
         except AssertionError, e:
             self.assertEqual(str(e), "The form 'wrong_form' was not used to render the response")
+        try:
+            self.assertFormError(response, 'wrong_form', 'some_field', 'Some error.', msg_prefix='abc')
+        except AssertionError, e:
+            self.assertEqual(str(e), "abc: The form 'wrong_form' was not used to render the response")
 
     def test_unknown_field(self):
         "An assertion is raised if the field name is unknown"
@@ -308,6 +400,10 @@ class AssertFormErrorTests(TestCase):
             self.assertFormError(response, 'form', 'some_field', 'Some error.')
         except AssertionError, e:
             self.assertEqual(str(e), "The form 'form' in context 0 does not contain the field 'some_field'")
+        try:
+            self.assertFormError(response, 'form', 'some_field', 'Some error.', msg_prefix='abc')
+        except AssertionError, e:
+            self.assertEqual(str(e), "abc: The form 'form' in context 0 does not contain the field 'some_field'")
 
     def test_noerror_field(self):
         "An assertion is raised if the field doesn't have any errors"
@@ -326,6 +422,10 @@ class AssertFormErrorTests(TestCase):
             self.assertFormError(response, 'form', 'value', 'Some error.')
         except AssertionError, e:
             self.assertEqual(str(e), "The field 'value' on form 'form' in context 0 contains no errors")
+        try:
+            self.assertFormError(response, 'form', 'value', 'Some error.', msg_prefix='abc')
+        except AssertionError, e:
+            self.assertEqual(str(e), "abc: The field 'value' on form 'form' in context 0 contains no errors")
 
     def test_unknown_error(self):
         "An assertion is raised if the field doesn't contain the provided error"
@@ -344,6 +444,10 @@ class AssertFormErrorTests(TestCase):
             self.assertFormError(response, 'form', 'email', 'Some error.')
         except AssertionError, e:
             self.assertEqual(str(e), "The field 'email' on form 'form' in context 0 does not contain the error 'Some error.' (actual errors: [u'Enter a valid e-mail address.'])")
+        try:
+            self.assertFormError(response, 'form', 'email', 'Some error.', msg_prefix='abc')
+        except AssertionError, e:
+            self.assertEqual(str(e), "abc: The field 'email' on form 'form' in context 0 does not contain the error 'Some error.' (actual errors: [u'Enter a valid e-mail address.'])")
 
     def test_unknown_nonfield_error(self):
         """
@@ -365,6 +469,10 @@ class AssertFormErrorTests(TestCase):
             self.assertFormError(response, 'form', None, 'Some error.')
         except AssertionError, e:
             self.assertEqual(str(e), "The form 'form' in context 0 does not contain the non-field error 'Some error.' (actual errors: )")
+        try:
+            self.assertFormError(response, 'form', None, 'Some error.', msg_prefix='abc')
+        except AssertionError, e:
+            self.assertEqual(str(e), "abc: The form 'form' in context 0 does not contain the non-field error 'Some error.' (actual errors: )")
 
 class LoginTests(TestCase):
     fixtures = ['testdata']
@@ -384,6 +492,27 @@ class LoginTests(TestCase):
         # Check that assertRedirects uses the original client, not the
         # default client.
         self.assertRedirects(response, "http://testserver/test_client_regress/get_view/")
+
+
+class SessionEngineTests(TestCase):
+    fixtures = ['testdata']
+
+    def setUp(self):
+        self.old_SESSION_ENGINE = settings.SESSION_ENGINE
+        settings.SESSION_ENGINE = 'regressiontests.test_client_regress.session'
+
+    def tearDown(self):
+        settings.SESSION_ENGINE = self.old_SESSION_ENGINE
+
+    def test_login(self):
+        "A session engine that modifies the session key can be used to log in"
+        login = self.client.login(username='testclient', password='password')
+        self.failUnless(login, 'Could not log in')
+
+        # Try to access a login protected page.
+        response = self.client.get("/test_client/login_protected_view/")
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.context['user'].username, 'testclient')
 
 class URLEscapingTests(TestCase):
     def test_simple_argument_get(self):
@@ -436,6 +565,11 @@ class ExceptionTests(TestCase):
 
 class TemplateExceptionTests(TestCase):
     def setUp(self):
+        # Reset the loaders so they don't try to render cached templates.
+        if loader.template_source_loaders is not None:
+            for template_loader in loader.template_source_loaders:
+                if hasattr(template_loader, 'reset'):
+                    template_loader.reset()
         self.old_templates = settings.TEMPLATE_DIRS
         settings.TEMPLATE_DIRS = ()
 
@@ -489,6 +623,12 @@ class ContextTests(TestCase):
         self.assertEqual(response.context['request-foo'], 'whiz')
         self.assertEqual(response.context['data'], 'sausage')
 
+        try:
+            response.context['does-not-exist']
+            self.fail('Should not be able to retrieve non-existent key')
+        except KeyError, e:
+            self.assertEquals(e.args[0], 'does-not-exist')
+
     def test_inherited_context(self):
         "Context variables can be retrieved from a list of contexts"
         response = self.client.get("/test_client_regress/request_data_extended/", data={'foo':'whiz'})
@@ -497,6 +637,13 @@ class ContextTests(TestCase):
         self.assertEqual(response.context['get-foo'], 'whiz')
         self.assertEqual(response.context['request-foo'], 'whiz')
         self.assertEqual(response.context['data'], 'bacon')
+
+        try:
+            response.context['does-not-exist']
+            self.fail('Should not be able to retrieve non-existent key')
+        except KeyError, e:
+            self.assertEquals(e.args[0], 'does-not-exist')
+
 
 class SessionTests(TestCase):
     fixtures = ['testdata.json']
@@ -573,6 +720,23 @@ class RequestMethodTests(TestCase):
         response = self.client.delete('/test_client_regress/request_methods/')
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.content, 'request method: DELETE')
+
+class RequestMethodStringDataTests(TestCase):
+    def test_post(self):
+        "Request a view with string data via request method POST"
+        # Regression test for #11371
+        data = u'{"test": "json"}'
+        response = self.client.post('/test_client_regress/request_methods/', data=data, content_type='application/json')
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.content, 'request method: POST')
+
+    def test_put(self):
+        "Request a view with string data via request method PUT"
+        # Regression test for #11371
+        data = u'{"test": "json"}'
+        response = self.client.put('/test_client_regress/request_methods/', data=data, content_type='application/json')
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.content, 'request method: PUT')
 
 class QueryStringTests(TestCase):
     def test_get_like_requests(self):
