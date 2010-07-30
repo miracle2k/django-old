@@ -5,10 +5,7 @@ tests = r"""
 >>> import datetime
 >>> import time
 >>> import re
->>> try:
-...     from decimal import Decimal
-... except ImportError:
-...     from django.utils._decimal import Decimal
+>>> from decimal import Decimal
 
 #########
 # Forms #
@@ -294,6 +291,24 @@ attribute in the Form gets precedence.
 <input type="text" name="email" value="test@example.com" />
 >>> print f['get_spam']
 <input checked="checked" type="checkbox" name="get_spam" />
+
+'True' or 'true' should be rendered without a value attribute
+>>> f = SignupForm({'email': 'test@example.com', 'get_spam': 'True'}, auto_id=False)
+>>> print f['get_spam']
+<input checked="checked" type="checkbox" name="get_spam" />
+
+>>> f = SignupForm({'email': 'test@example.com', 'get_spam': 'true'}, auto_id=False)
+>>> print f['get_spam']
+<input checked="checked" type="checkbox" name="get_spam" />
+
+A value of 'False' or 'false' should be rendered unchecked
+>>> f = SignupForm({'email': 'test@example.com', 'get_spam': 'False'}, auto_id=False)
+>>> print f['get_spam']
+<input type="checkbox" name="get_spam" />
+
+>>> f = SignupForm({'email': 'test@example.com', 'get_spam': 'false'}, auto_id=False)
+>>> print f['get_spam']
+<input type="checkbox" name="get_spam" />
 
 Any Field can have a Widget class passed to its constructor:
 >>> class ContactForm(Form):
@@ -1806,5 +1821,67 @@ True
 ['token']
 >>> [f.name for f in form.visible_fields()]
 ['artist', 'name']
+
+# Hidden initial input gets its own unique id ################################
+
+>>> class MyForm(Form):
+...     field1 = CharField(max_length=50, show_hidden_initial=True)
+>>> print MyForm()
+<tr><th><label for="id_field1">Field1:</label></th><td><input id="id_field1" type="text" name="field1" maxlength="50" /><input type="hidden" name="initial-field1" id="initial-id_field1" /></td></tr>
+
+# The error_html_class and required_html_class attributes ####################
+
+>>> class Person(Form):
+...     name = CharField()
+...     is_cool = NullBooleanField()
+...     email = EmailField(required=False)
+...     age = IntegerField()
+
+>>> p = Person({})
+>>> p.error_css_class = 'error'
+>>> p.required_css_class = 'required'
+
+>>> print p.as_ul()
+<li class="required error"><ul class="errorlist"><li>This field is required.</li></ul><label for="id_name">Name:</label> <input type="text" name="name" id="id_name" /></li>
+<li class="required"><label for="id_is_cool">Is cool:</label> <select name="is_cool" id="id_is_cool">
+<option value="1" selected="selected">Unknown</option>
+<option value="2">Yes</option>
+<option value="3">No</option>
+</select></li>
+<li><label for="id_email">Email:</label> <input type="text" name="email" id="id_email" /></li>
+<li class="required error"><ul class="errorlist"><li>This field is required.</li></ul><label for="id_age">Age:</label> <input type="text" name="age" id="id_age" /></li>
+
+>>> print p.as_p()
+<ul class="errorlist"><li>This field is required.</li></ul>
+<p class="required error"><label for="id_name">Name:</label> <input type="text" name="name" id="id_name" /></p>
+<p class="required"><label for="id_is_cool">Is cool:</label> <select name="is_cool" id="id_is_cool">
+<option value="1" selected="selected">Unknown</option>
+<option value="2">Yes</option>
+<option value="3">No</option>
+</select></p>
+<p><label for="id_email">Email:</label> <input type="text" name="email" id="id_email" /></p>
+<ul class="errorlist"><li>This field is required.</li></ul>
+<p class="required error"><label for="id_age">Age:</label> <input type="text" name="age" id="id_age" /></p>
+
+>>> print p.as_table()
+<tr class="required error"><th><label for="id_name">Name:</label></th><td><ul class="errorlist"><li>This field is required.</li></ul><input type="text" name="name" id="id_name" /></td></tr>
+<tr class="required"><th><label for="id_is_cool">Is cool:</label></th><td><select name="is_cool" id="id_is_cool">
+<option value="1" selected="selected">Unknown</option>
+<option value="2">Yes</option>
+<option value="3">No</option>
+</select></td></tr>
+<tr><th><label for="id_email">Email:</label></th><td><input type="text" name="email" id="id_email" /></td></tr>
+<tr class="required error"><th><label for="id_age">Age:</label></th><td><ul class="errorlist"><li>This field is required.</li></ul><input type="text" name="age" id="id_age" /></td></tr>
+
+
+
+# Checking that the label for SplitDateTimeField is not being displayed #####
+
+>>> class EventForm(Form):
+...     happened_at = SplitDateTimeField(widget=widgets.SplitHiddenDateTimeWidget)
+...
+>>> form = EventForm()
+>>> form.as_ul()
+u'<input type="hidden" name="happened_at_0" id="id_happened_at_0" /><input type="hidden" name="happened_at_1" id="id_happened_at_1" />'
 
 """

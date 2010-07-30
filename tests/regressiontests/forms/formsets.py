@@ -20,7 +20,7 @@ but we'll look at how to do so later.
 
 >>> formset = ChoiceFormSet(auto_id=False, prefix='choices')
 >>> print formset
-<input type="hidden" name="choices-TOTAL_FORMS" value="1" /><input type="hidden" name="choices-INITIAL_FORMS" value="0" />
+<input type="hidden" name="choices-TOTAL_FORMS" value="1" /><input type="hidden" name="choices-INITIAL_FORMS" value="0" /><input type="hidden" name="choices-MAX_NUM_FORMS" />
 <tr><th>Choice:</th><td><input type="text" name="choices-0-choice" /></td></tr>
 <tr><th>Votes:</th><td><input type="text" name="choices-0-votes" /></td></tr>
 
@@ -34,6 +34,7 @@ the TOTAL_FORMS field appropriately.
 >>> data = {
 ...     'choices-TOTAL_FORMS': '1', # the number of forms rendered
 ...     'choices-INITIAL_FORMS': '0', # the number of forms with initial data
+...     'choices-MAX_NUM_FORMS': '0', # max number of forms
 ...     'choices-0-choice': 'Calexico',
 ...     'choices-0-votes': '100',
 ... }
@@ -60,6 +61,7 @@ any of the forms.
 >>> data = {
 ...     'choices-TOTAL_FORMS': '1', # the number of forms rendered
 ...     'choices-INITIAL_FORMS': '0', # the number of forms with initial data
+...     'choices-MAX_NUM_FORMS': '0', # max number of forms
 ...     'choices-0-choice': 'Calexico',
 ...     'choices-0-votes': '',
 ... }
@@ -90,6 +92,7 @@ Let's simulate what would happen if we submitted this form.
 >>> data = {
 ...     'choices-TOTAL_FORMS': '2', # the number of forms rendered
 ...     'choices-INITIAL_FORMS': '1', # the number of forms with initial data
+...     'choices-MAX_NUM_FORMS': '0', # max number of forms
 ...     'choices-0-choice': 'Calexico',
 ...     'choices-0-votes': '100',
 ...     'choices-1-choice': '',
@@ -111,6 +114,7 @@ handle that later.
 >>> data = {
 ...     'choices-TOTAL_FORMS': '2', # the number of forms rendered
 ...     'choices-INITIAL_FORMS': '1', # the number of forms with initial data
+...     'choices-MAX_NUM_FORMS': '0', # max number of forms
 ...     'choices-0-choice': 'Calexico',
 ...     'choices-0-votes': '100',
 ...     'choices-1-choice': 'The Decemberists',
@@ -130,6 +134,7 @@ handle that case later.
 >>> data = {
 ...     'choices-TOTAL_FORMS': '2', # the number of forms rendered
 ...     'choices-INITIAL_FORMS': '1', # the number of forms with initial data
+...     'choices-MAX_NUM_FORMS': '0', # max number of forms
 ...     'choices-0-choice': '', # deleted value
 ...     'choices-0-votes': '', # deleted value
 ...     'choices-1-choice': '',
@@ -167,6 +172,7 @@ number of forms to be completed.
 >>> data = {
 ...     'choices-TOTAL_FORMS': '3', # the number of forms rendered
 ...     'choices-INITIAL_FORMS': '0', # the number of forms with initial data
+...     'choices-MAX_NUM_FORMS': '0', # max number of forms
 ...     'choices-0-choice': '',
 ...     'choices-0-votes': '',
 ...     'choices-1-choice': '',
@@ -187,6 +193,7 @@ We can just fill out one of the forms.
 >>> data = {
 ...     'choices-TOTAL_FORMS': '3', # the number of forms rendered
 ...     'choices-INITIAL_FORMS': '0', # the number of forms with initial data
+...     'choices-MAX_NUM_FORMS': '0', # max number of forms
 ...     'choices-0-choice': 'Calexico',
 ...     'choices-0-votes': '100',
 ...     'choices-1-choice': '',
@@ -207,6 +214,7 @@ And once again, if we try to partially complete a form, validation will fail.
 >>> data = {
 ...     'choices-TOTAL_FORMS': '3', # the number of forms rendered
 ...     'choices-INITIAL_FORMS': '0', # the number of forms with initial data
+...     'choices-MAX_NUM_FORMS': '0', # max number of forms
 ...     'choices-0-choice': 'Calexico',
 ...     'choices-0-votes': '100',
 ...     'choices-1-choice': 'The Decemberists',
@@ -238,6 +246,13 @@ data.
 <li>Choice: <input type="text" name="choices-3-choice" /></li>
 <li>Votes: <input type="text" name="choices-3-votes" /></li>
 
+Make sure retrieving an empty form works, and it shows up in the form list
+
+>>> formset.empty_form.empty_permitted
+True
+>>> print formset.empty_form.as_ul()
+<li>Choice: <input type="text" name="choices-__prefix__-choice" /></li>
+<li>Votes: <input type="text" name="choices-__prefix__-votes" /></li>
 
 # FormSets with deletion ######################################################
 
@@ -267,6 +282,7 @@ To delete something, we just need to set that form's special delete field to
 >>> data = {
 ...     'choices-TOTAL_FORMS': '3', # the number of forms rendered
 ...     'choices-INITIAL_FORMS': '2', # the number of forms with initial data
+...     'choices-MAX_NUM_FORMS': '0', # max number of forms
 ...     'choices-0-choice': 'Calexico',
 ...     'choices-0-votes': '100',
 ...     'choices-0-DELETE': '',
@@ -296,6 +312,7 @@ it's going to be deleted.
 >>> data = {
 ...     'check-TOTAL_FORMS': '3', # the number of forms rendered
 ...     'check-INITIAL_FORMS': '2', # the number of forms with initial data
+...     'check-MAX_NUM_FORMS': '0', # max number of forms
 ...     'check-0-field': '200',
 ...     'check-0-DELETE': '',
 ...     'check-1-field': '50',
@@ -314,6 +331,26 @@ If we remove the deletion flag now we will have our validation back.
 >>> formset = CheckFormSet(data, prefix='check')
 >>> formset.is_valid()
 False
+
+Should be able to get deleted_forms from a valid formset even if a
+deleted form would have been invalid.
+
+>>> class Person(Form):
+...     name = CharField()
+
+>>> PeopleForm = formset_factory(
+...     form=Person,
+...     can_delete=True)
+
+>>> p = PeopleForm(
+...     {'form-0-name': u'', 'form-0-DELETE': u'on', # no name!
+...      'form-TOTAL_FORMS': 1, 'form-INITIAL_FORMS': 1,
+...      'form-MAX_NUM_FORMS': 1})
+
+>>> p.is_valid()
+True
+>>> len(p.deleted_forms)
+1
 
 # FormSets with ordering ######################################################
 
@@ -344,6 +381,7 @@ something at the front of the list, you'd need to set it's order to 0.
 >>> data = {
 ...     'choices-TOTAL_FORMS': '3', # the number of forms rendered
 ...     'choices-INITIAL_FORMS': '2', # the number of forms with initial data
+...     'choices-MAX_NUM_FORMS': '0', # max number of forms
 ...     'choices-0-choice': 'Calexico',
 ...     'choices-0-votes': '100',
 ...     'choices-0-ORDER': '1',
@@ -370,6 +408,7 @@ they will be sorted below everything else.
 >>> data = {
 ...     'choices-TOTAL_FORMS': '4', # the number of forms rendered
 ...     'choices-INITIAL_FORMS': '3', # the number of forms with initial data
+...     'choices-MAX_NUM_FORMS': '0', # max number of forms
 ...     'choices-0-choice': 'Calexico',
 ...     'choices-0-votes': '100',
 ...     'choices-0-ORDER': '1',
@@ -399,6 +438,7 @@ Ordering should work with blank fieldsets.
 >>> data = {
 ...     'choices-TOTAL_FORMS': '3', # the number of forms rendered
 ...     'choices-INITIAL_FORMS': '0', # the number of forms with initial data
+...     'choices-MAX_NUM_FORMS': '0', # max number of forms
 ... }
 
 >>> formset = ChoiceFormSet(data, auto_id=False, prefix='choices')
@@ -443,6 +483,7 @@ Let's delete Fergie, and put The Decemberists ahead of Calexico.
 >>> data = {
 ...     'choices-TOTAL_FORMS': '4', # the number of forms rendered
 ...     'choices-INITIAL_FORMS': '3', # the number of forms with initial data
+...     'choices-MAX_NUM_FORMS': '0', # max number of forms
 ...     'choices-0-choice': 'Calexico',
 ...     'choices-0-votes': '100',
 ...     'choices-0-ORDER': '1',
@@ -471,6 +512,26 @@ True
 >>> [form.cleaned_data for form in formset.deleted_forms]
 [{'votes': 900, 'DELETE': True, 'ORDER': 2, 'choice': u'Fergie'}]
 
+Should be able to get ordered forms from a valid formset even if a
+deleted form would have been invalid.
+
+>>> class Person(Form):
+...     name = CharField()
+
+>>> PeopleForm = formset_factory(
+...     form=Person,
+...     can_delete=True,
+...     can_order=True)
+
+>>> p = PeopleForm(
+...     {'form-0-name': u'', 'form-0-DELETE': u'on', # no name!
+...      'form-TOTAL_FORMS': 1, 'form-INITIAL_FORMS': 1,
+...      'form-MAX_NUM_FORMS': 1})
+
+>>> p.is_valid()
+True
+>>> p.ordered_forms
+[]
 
 # FormSet clean hook ##########################################################
 
@@ -501,6 +562,7 @@ We start out with a some duplicate data.
 >>> data = {
 ...     'drinks-TOTAL_FORMS': '2', # the number of forms rendered
 ...     'drinks-INITIAL_FORMS': '0', # the number of forms with initial data
+...     'drinks-MAX_NUM_FORMS': '0', # max number of forms
 ...     'drinks-0-name': 'Gin and Tonic',
 ...     'drinks-1-name': 'Gin and Tonic',
 ... }
@@ -522,6 +584,7 @@ Make sure we didn't break the valid case.
 >>> data = {
 ...     'drinks-TOTAL_FORMS': '2', # the number of forms rendered
 ...     'drinks-INITIAL_FORMS': '0', # the number of forms with initial data
+...     'drinks-MAX_NUM_FORMS': '0', # max number of forms
 ...     'drinks-0-name': 'Gin and Tonic',
 ...     'drinks-1-name': 'Bloody Mary',
 ... }
@@ -536,6 +599,24 @@ True
 
 # Base case for max_num.
 
+# When not passed, max_num will take its default value of None, i.e. unlimited
+# number of forms, only controlled by the value of the extra parameter.
+
+>>> LimitedFavoriteDrinkFormSet = formset_factory(FavoriteDrinkForm, extra=3)
+>>> formset = LimitedFavoriteDrinkFormSet()
+>>> for form in formset.forms:
+...     print form
+<tr><th><label for="id_form-0-name">Name:</label></th><td><input type="text" name="form-0-name" id="id_form-0-name" /></td></tr>
+<tr><th><label for="id_form-1-name">Name:</label></th><td><input type="text" name="form-1-name" id="id_form-1-name" /></td></tr>
+<tr><th><label for="id_form-2-name">Name:</label></th><td><input type="text" name="form-2-name" id="id_form-2-name" /></td></tr>
+
+# If max_num is 0 then no form is rendered at all.
+
+>>> LimitedFavoriteDrinkFormSet = formset_factory(FavoriteDrinkForm, extra=3, max_num=0)
+>>> formset = LimitedFavoriteDrinkFormSet()
+>>> for form in formset.forms:
+...     print form
+
 >>> LimitedFavoriteDrinkFormSet = formset_factory(FavoriteDrinkForm, extra=5, max_num=2)
 >>> formset = LimitedFavoriteDrinkFormSet()
 >>> for form in formset.forms:
@@ -543,7 +624,7 @@ True
 <tr><th><label for="id_form-0-name">Name:</label></th><td><input type="text" name="form-0-name" id="id_form-0-name" /></td></tr>
 <tr><th><label for="id_form-1-name">Name:</label></th><td><input type="text" name="form-1-name" id="id_form-1-name" /></td></tr>
 
-# Ensure the that max_num has no affect when extra is less than max_forms.
+# Ensure that max_num has no effect when extra is less than max_num.
 
 >>> LimitedFavoriteDrinkFormSet = formset_factory(FavoriteDrinkForm, extra=1, max_num=2)
 >>> formset = LimitedFavoriteDrinkFormSet()
@@ -552,6 +633,32 @@ True
 <tr><th><label for="id_form-0-name">Name:</label></th><td><input type="text" name="form-0-name" id="id_form-0-name" /></td></tr>
 
 # max_num with initial data
+
+# When not passed, max_num will take its default value of None, i.e. unlimited
+# number of forms, only controlled by the values of the initial and extra
+# parameters.
+
+>>> initial = [
+...     {'name': 'Fernet and Coke'},
+... ]
+>>> LimitedFavoriteDrinkFormSet = formset_factory(FavoriteDrinkForm, extra=1)
+>>> formset = LimitedFavoriteDrinkFormSet(initial=initial)
+>>> for form in formset.forms:
+...     print form
+<tr><th><label for="id_form-0-name">Name:</label></th><td><input type="text" name="form-0-name" value="Fernet and Coke" id="id_form-0-name" /></td></tr>
+<tr><th><label for="id_form-1-name">Name:</label></th><td><input type="text" name="form-1-name" id="id_form-1-name" /></td></tr>
+
+# If max_num is 0 then no form is rendered at all, even if extra and initial
+# are specified.
+
+>>> initial = [
+...     {'name': 'Fernet and Coke'},
+...     {'name': 'Bloody Mary'},
+... ]
+>>> LimitedFavoriteDrinkFormSet = formset_factory(FavoriteDrinkForm, extra=1, max_num=0)
+>>> formset = LimitedFavoriteDrinkFormSet(initial=initial)
+>>> for form in formset.forms:
+...     print form
 
 # More initial forms than max_num will result in only the first max_num of
 # them to be displayed with no extra forms.
@@ -597,5 +704,21 @@ Make sure the management form has the correct prefix.
 >>> formset = FavoriteDrinksFormSet(initial={})
 >>> formset.management_form.prefix
 'form'
+
+# Regression test for #12878 #################################################
+
+>>> data = {
+...     'drinks-TOTAL_FORMS': '2', # the number of forms rendered
+...     'drinks-INITIAL_FORMS': '0', # the number of forms with initial data
+...     'drinks-MAX_NUM_FORMS': '0', # max number of forms
+...     'drinks-0-name': 'Gin and Tonic',
+...     'drinks-1-name': 'Gin and Tonic',
+... }
+
+>>> formset = FavoriteDrinksFormSet(data, prefix='drinks')
+>>> formset.is_valid()
+False
+>>> print formset.non_form_errors()
+<ul class="errorlist"><li>You may only specify a drink once.</li></ul>
 
 """

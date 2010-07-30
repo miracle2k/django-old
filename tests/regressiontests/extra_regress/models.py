@@ -1,5 +1,6 @@
-import copy
 import datetime
+
+import django.utils.copycompat as copy
 
 from django.contrib.auth.models import User
 from django.db import models
@@ -15,11 +16,13 @@ class RevisionableModel(models.Model):
     def __unicode__(self):
         return u"%s (%s, %s)" % (self.title, self.id, self.base.id)
 
-    def save(self, force_insert=False, force_update=False):
-        super(RevisionableModel, self).save(force_insert, force_update)
+    def save(self, *args, **kwargs):
+        super(RevisionableModel, self).save(*args, **kwargs)
         if not self.base:
             self.base = self
-            super(RevisionableModel, self).save()
+            kwargs.pop('force_insert', None)
+            kwargs.pop('force_update', None)
+            super(RevisionableModel, self).save(*args, **kwargs)
 
     def new_revision(self):
         new_revision = copy.copy(self)
@@ -128,12 +131,12 @@ True
 # only returned if they are explicitly mentioned.
 >>> TestObject(first='first', second='second', third='third').save()
 
->>> TestObject.objects.extra(select=SortedDict((('foo','first'),('bar','second'),('whiz','third')))).values()
-[{'bar': u'second', 'third': u'third', 'second': u'second', 'whiz': u'third', 'foo': u'first', 'id': 1, 'first': u'first'}]
+>>> list(TestObject.objects.extra(select=SortedDict((('foo','first'),('bar','second'),('whiz','third')))).values()) == [{'bar': u'second', 'third': u'third', 'second': u'second', 'whiz': u'third', 'foo': u'first', 'id': 1, 'first': u'first'}]
+True
 
 # Extra clauses after an empty values clause are still included
->>> TestObject.objects.values().extra(select=SortedDict((('foo','first'),('bar','second'),('whiz','third'))))
-[{'bar': u'second', 'third': u'third', 'second': u'second', 'whiz': u'third', 'foo': u'first', 'id': 1, 'first': u'first'}]
+>>> list(TestObject.objects.values().extra(select=SortedDict((('foo','first'),('bar','second'),('whiz','third'))))) == [{'bar': u'second', 'third': u'third', 'second': u'second', 'whiz': u'third', 'foo': u'first', 'id': 1, 'first': u'first'}]
+True
 
 # Extra columns are ignored if not mentioned in the values() clause
 >>> TestObject.objects.extra(select=SortedDict((('foo','first'),('bar','second'),('whiz','third')))).values('first', 'second')
@@ -205,6 +208,10 @@ True
 [{'pk': 1}]
 
 >>> TestObject.objects.filter(pk__in=TestObject.objects.values('pk').extra(select={'extra': 1}))
+[<TestObject: TestObject: first,second,third>]
+
+>>> pk = TestObject.objects.get().pk
+>>> TestObject.objects.filter(pk=pk) | TestObject.objects.extra(where=["id > %s"], params=[pk])
 [<TestObject: TestObject: first,second,third>]
 
 """}

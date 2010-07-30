@@ -5,12 +5,6 @@ import unittest
 
 import django.contrib as contrib
 
-try:
-    set
-except NameError:
-    from sets import Set as set     # For Python 2.3
-
-
 CONTRIB_DIR_NAME = 'django.contrib'
 MODEL_TESTS_DIR_NAME = 'modeltests'
 REGRESSION_TESTS_DIR_NAME = 'regressiontests'
@@ -21,6 +15,8 @@ CONTRIB_DIR = os.path.dirname(contrib.__file__)
 MODEL_TEST_DIR = os.path.join(os.path.dirname(__file__), MODEL_TESTS_DIR_NAME)
 REGRESSION_TEST_DIR = os.path.join(os.path.dirname(__file__), REGRESSION_TESTS_DIR_NAME)
 
+REGRESSION_SUBDIRS_TO_SKIP = ['locale']
+
 ALWAYS_INSTALLED_APPS = [
     'django.contrib.contenttypes',
     'django.contrib.auth',
@@ -28,6 +24,7 @@ ALWAYS_INSTALLED_APPS = [
     'django.contrib.flatpages',
     'django.contrib.redirects',
     'django.contrib.sessions',
+    'django.contrib.messages',
     'django.contrib.comments',
     'django.contrib.admin',
 ]
@@ -36,7 +33,9 @@ def get_test_models():
     models = []
     for loc, dirpath in (MODEL_TESTS_DIR_NAME, MODEL_TEST_DIR), (REGRESSION_TESTS_DIR_NAME, REGRESSION_TEST_DIR), (CONTRIB_DIR_NAME, CONTRIB_DIR):
         for f in os.listdir(dirpath):
-            if f.startswith('__init__') or f.startswith('.') or f.startswith('sql') or f.startswith('invalid'):
+            if f.startswith('__init__') or f.startswith('.') or \
+               f.startswith('sql') or f.startswith('invalid') or \
+               os.path.basename(f) in REGRESSION_SUBDIRS_TO_SKIP:
                 continue
             models.append((loc, f))
     return models
@@ -85,11 +84,10 @@ class InvalidModelTestCase(unittest.TestCase):
         self.assert_(not unexpected, "Unexpected Errors: " + '\n'.join(unexpected))
         self.assert_(not missing, "Missing Errors: " + '\n'.join(missing))
 
-def django_tests(verbosity, interactive, test_labels):
+def django_tests(verbosity, interactive, failfast, test_labels):
     from django.conf import settings
 
     old_installed_apps = settings.INSTALLED_APPS
-    old_test_database_name = settings.TEST_DATABASE_NAME
     old_root_urlconf = getattr(settings, "ROOT_URLCONF", "")
     old_template_dirs = settings.TEMPLATE_DIRS
     old_use_i18n = settings.USE_I18N
@@ -107,6 +105,7 @@ def django_tests(verbosity, interactive, test_labels):
     settings.MIDDLEWARE_CLASSES = (
         'django.contrib.sessions.middleware.SessionMiddleware',
         'django.contrib.auth.middleware.AuthenticationMiddleware',
+        'django.contrib.messages.middleware.MessageMiddleware',
         'django.middleware.common.CommonMiddleware',
     )
     settings.SITE_ID = 1
@@ -155,12 +154,25 @@ def django_tests(verbosity, interactive, test_labels):
     # Run the test suite, including the extra validation tests.
     from django.test.utils import get_runner
     if not hasattr(settings, 'TEST_RUNNER'):
-        settings.TEST_RUNNER = 'django.test.simple.run_tests'
-    test_runner = get_runner(settings)
+        settings.TEST_RUNNER = 'django.test.simple.DjangoTestSuiteRunner'
+    TestRunner = get_runner(settings)
 
-    failures = test_runner(test_labels, verbosity=verbosity, interactive=interactive, extra_tests=extra_tests)
+    if hasattr(TestRunner, 'func_name'):
+        # Pre 1.2 test runners were just functions,
+        # and did not support the 'failfast' option.
+        import warnings
+        warnings.warn(
+            'Function-based test runners are deprecated. Test runners should be classes with a run_tests() method.',
+            PendingDeprecationWarning
+        )
+        failures = TestRunner(test_labels, verbosity=verbosity, interactive=interactive,
+            extra_tests=extra_tests)
+    else:
+        test_runner = TestRunner(verbosity=verbosity, interactive=interactive, failfast=failfast)
+        failures = test_runner.run_tests(test_labels, extra_tests=extra_tests)
+
     if failures:
-        sys.exit(failures)
+        sys.exit(bool(failures))
 
     # Restore the old settings.
     settings.INSTALLED_APPS = old_installed_apps
@@ -180,6 +192,8 @@ if __name__ == "__main__":
         help='Verbosity level; 0=minimal output, 1=normal output, 2=all output')
     parser.add_option('--noinput', action='store_false', dest='interactive', default=True,
         help='Tells Django to NOT prompt the user for input of any kind.')
+    parser.add_option('--failfast', action='store_true', dest='failfast', default=False,
+        help='Tells Django to stop running the test suite after first failed test.')
     parser.add_option('--settings',
         help='Python path to settings module, e.g. "myproject.settings". If this isn\'t provided, the DJANGO_SETTINGS_MODULE environment variable will be used.')
     options, args = parser.parse_args()
@@ -188,4 +202,4 @@ if __name__ == "__main__":
     elif "DJANGO_SETTINGS_MODULE" not in os.environ:
         parser.error("DJANGO_SETTINGS_MODULE is not set in the environment. "
                       "Set it or use --settings.")
-    django_tests(int(options.verbosity), options.interactive, args)
+    django_tests(int(options.verbosity), options.interactive, options.failfast, args)

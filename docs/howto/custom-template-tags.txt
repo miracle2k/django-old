@@ -7,12 +7,13 @@ Custom template tags and filters
 Introduction
 ============
 
-Django's template system comes a wide variety of :ref:`built-in tags and filters
-<ref-templates-builtins>` designed to address the presentation logic needs of
-your application. Nevertheless, you may find yourself needing functionality that
-is not covered by the core set of template primitives. You can extend the
-template engine by defining custom tags and filters using Python, and then make
-them available to your templates using the ``{% load %}`` tag.
+Django's template system comes with a wide variety of :ref:`built-in
+tags and filters <ref-templates-builtins>` designed to address the
+presentation logic needs of your application. Nevertheless, you may
+find yourself needing functionality that is not covered by the core
+set of template primitives. You can extend the template engine by
+defining custom tags and filters using Python, and then make them
+available to your templates using the ``{% load %}`` tag.
 
 Code layout
 -----------
@@ -138,8 +139,7 @@ The ``Library.filter()`` method takes two arguments:
     2. The compilation function -- a Python function (not the name of the
        function as a string).
 
-If you're using Python 2.4 or above, you can use ``register.filter()`` as a
-decorator instead::
+You can use ``register.filter()`` as a decorator instead::
 
     @register.filter(name='cut')
     @stringfilter
@@ -463,6 +463,85 @@ new ``Context`` in this example, the results would have *always* been
 automatically escaped, which may not be the desired behavior if the template
 tag is used inside a ``{% autoescape off %}`` block.
 
+.. _template_tag_thread_safety:
+
+Thread-safety considerations
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+.. versionadded:: 1.2
+
+Once a node is parsed, its ``render`` method may be called any number of times.
+Since Django is sometimes run in multi-threaded environments, a single node may
+be simultaneously rendering with different contexts in response to two separate
+requests. Therefore, it's important to make sure your template tags are thread
+safe.
+
+To make sure your template tags are thread safe, you should never store state
+information on the node itself. For example, Django provides a builtin ``cycle``
+template tag that cycles among a list of given strings each time it's rendered::
+
+    {% for o in some_list %}
+        <tr class="{% cycle 'row1' 'row2' %}>
+            ...
+        </tr>
+    {% endfor %}
+
+A naive implementation of ``CycleNode`` might look something like this::
+
+    class CycleNode(Node):
+        def __init__(self, cyclevars):
+            self.cycle_iter = itertools.cycle(cyclevars)
+        def render(self, context):
+            return self.cycle_iter.next()
+
+But, suppose we have two templates rendering the template snippet from above at
+the same time:
+
+    1. Thread 1 performs its first loop iteration, ``CycleNode.render()``
+       returns 'row1'
+    2. Thread 2 performs its first loop iteration, ``CycleNode.render()``
+       returns 'row2'
+    3. Thread 1 performs its second loop iteration, ``CycleNode.render()``
+       returns 'row1'
+    4. Thread 2 performs its second loop iteration, ``CycleNode.render()``
+       returns 'row2'
+
+The CycleNode is iterating, but it's iterating globally. As far as Thread 1
+and Thread 2 are concerned, it's always returning the same value. This is
+obviously not what we want!
+
+To address this problem, Django provides a ``render_context`` that's associated
+with the ``context`` of the template that is currently being rendered. The
+``render_context`` behaves like a Python dictionary, and should be used to store
+``Node`` state between invocations of the ``render`` method.
+
+Let's refactor our ``CycleNode`` implementation to use the ``render_context``::
+
+    class CycleNode(Node):
+        def __init__(self, cyclevars):
+            self.cyclevars = cyclevars
+        def render(self, context):
+            if self not in context.render_context:
+                context.render_context[self] = itertools.cycle(self.cyclevars)
+            cycle_iter = context.render_context[self]
+            return cycle_iter.next()
+
+Note that it's perfectly safe to store global information that will not change
+throughout the life of the ``Node`` as an attribute. In the case of
+``CycleNode``, the ``cyclevars`` argument doesn't change after the ``Node`` is
+instantiated, so we don't need to put it in the ``render_context``. But state
+information that is specific to the template that is currently being rendered,
+like the current iteration of the ``CycleNode``, should be stored in the
+``render_context``.
+
+.. note::
+    Notice how we used ``self`` to scope the ``CycleNode`` specific information
+    within the ``render_context``. There may be multiple ``CycleNodes`` in a
+    given template, so we need to be careful not to clobber another node's state
+    information. The easiest way to do this is to always use ``self`` as the key
+    into ``render_context``. If you're keeping track of several state variables,
+    make ``render_context[self]`` a dictionary.
+
 Registering the tag
 ~~~~~~~~~~~~~~~~~~~
 
@@ -478,8 +557,7 @@ The ``tag()`` method takes two arguments:
     2. The compilation function -- a Python function (not the name of the
        function as a string).
 
-As with filter registration, it is also possible to use this as a decorator, in
-Python 2.4 and above::
+As with filter registration, it is also possible to use this as a decorator::
 
     @register.tag(name="current_time")
     def do_current_time(parser, token):
@@ -578,7 +656,7 @@ Our earlier ``current_time`` function could thus be written like this::
 
     register.simple_tag(current_time)
 
-In Python 2.4, the decorator syntax also works::
+The decorator syntax also works::
 
     @register.simple_tag
     def current_time(format_string):
@@ -659,8 +737,7 @@ loader, we'd register the tag like this::
     # Here, register is a django.template.Library instance, as before
     register.inclusion_tag('results.html')(show_results)
 
-As always, Python 2.4 decorator syntax works as well, so we could have
-written::
+As always, decorator syntax works as well, so we could have written::
 
     @register.inclusion_tag('results.html')
     def show_results(poll):
@@ -750,7 +827,7 @@ like so:
 
 .. code-block:: html+django
 
-    {% get_current_time "%Y-%M-%d %I:%M %p" as my_current_time %}
+    {% current_time "%Y-%M-%d %I:%M %p" as my_current_time %}
     <p>The current time is {{ my_current_time }}.</p>
 
 To do that, you'll need to refactor both the compilation function and ``Node``

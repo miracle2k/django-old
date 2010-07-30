@@ -1,4 +1,5 @@
 from django.db import models
+from django.contrib.auth import models as auth
 
 # No related name is needed here, since symmetrical relations are not
 # explicitly reversible.
@@ -12,6 +13,13 @@ class SelfRefer(models.Model):
 
 class Tag(models.Model):
     name = models.CharField(max_length=10)
+
+    def __unicode__(self):
+        return self.name
+
+# Regression for #11956 -- a many to many to the base class
+class TagCollection(Tag):
+    tags = models.ManyToManyField(Tag, related_name='tag_collections')
 
     def __unicode__(self):
         return self.name
@@ -40,6 +48,14 @@ class Line(models.Model):
 class Worksheet(models.Model):
     id = models.CharField(primary_key=True, max_length=100)
     lines = models.ManyToManyField(Line, blank=True, null=True)
+
+# Regression for #11226 -- A model with the same name that another one to
+# which it has a m2m relation. This shouldn't cause a name clash between
+# the automatically created m2m intermediary table FK field names when
+# running syncdb
+class User(models.Model):
+    name = models.CharField(max_length=30)
+    friends = models.ManyToManyField(auth.User)
 
 __test__ = {"regressions": """
 # Multiple m2m references to the same model or a different model must be
@@ -92,6 +108,18 @@ FieldError: Cannot resolve keyword 'porcupine' into field. Choices are: id, name
 >>> w = Worksheet(id='abc')
 >>> w.save()
 >>> w.delete()
+
+# Regression for #11956 -- You can add an object to a m2m with the
+# base class without causing integrity errors
+>>> c1 = TagCollection.objects.create(name='c1')
+>>> c1.tags = [t1,t2]
+
+>>> c1 = TagCollection.objects.get(name='c1')
+>>> c1.tags.all()
+[<Tag: t1>, <Tag: t2>]
+
+>>> t1.tag_collections.all()
+[<TagCollection: c1>]
 
 """
 }

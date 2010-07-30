@@ -2,11 +2,6 @@ import datetime
 from django import forms
 from django.db import models
 
-try:
-    sorted
-except NameError:
-    from django.utils.itercompat import sorted
-
 class Author(models.Model):
     name = models.CharField(max_length=100)
 
@@ -200,6 +195,7 @@ __test__ = {'API_TESTS': """
 >>> data = {
 ...     'form-TOTAL_FORMS': '3', # the number of forms rendered
 ...     'form-INITIAL_FORMS': '0', # the number of forms with initial data
+...     'form-MAX_NUM_FORMS': '', # the max number of forms
 ...     'form-0-name': 'Charles Baudelaire',
 ...     'form-1-name': 'Arthur Rimbaud',
 ...     'form-2-name': '',
@@ -237,6 +233,7 @@ them in alphabetical order by name.
 >>> data = {
 ...     'form-TOTAL_FORMS': '3', # the number of forms rendered
 ...     'form-INITIAL_FORMS': '2', # the number of forms with initial data
+...     'form-MAX_NUM_FORMS': '', # the max number of forms
 ...     'form-0-id': '2',
 ...     'form-0-name': 'Arthur Rimbaud',
 ...     'form-1-id': '1',
@@ -280,6 +277,7 @@ deltetion, make sure we don't save that form.
 >>> data = {
 ...     'form-TOTAL_FORMS': '4', # the number of forms rendered
 ...     'form-INITIAL_FORMS': '3', # the number of forms with initial data
+...     'form-MAX_NUM_FORMS': '', # the max number of forms
 ...     'form-0-id': '2',
 ...     'form-0-name': 'Arthur Rimbaud',
 ...     'form-1-id': '1',
@@ -309,6 +307,7 @@ Let's edit a record to ensure save only returns that one record.
 >>> data = {
 ...     'form-TOTAL_FORMS': '4', # the number of forms rendered
 ...     'form-INITIAL_FORMS': '3', # the number of forms with initial data
+...     'form-MAX_NUM_FORMS': '', # the max number of forms
 ...     'form-0-id': '2',
 ...     'form-0-name': 'Walt Whitman',
 ...     'form-1-id': '1',
@@ -339,6 +338,7 @@ Test the behavior of commit=False and save_m2m
 >>> data = {
 ...     'form-TOTAL_FORMS': '2', # the number of forms rendered
 ...     'form-INITIAL_FORMS': '1', # the number of forms with initial data
+...     'form-MAX_NUM_FORMS': '', # the max number of forms
 ...     'form-0-id': '1',
 ...     'form-0-name': '2nd Tuesday of the Week Meeting',
 ...     'form-0-authors': [2, 1, 3, 4],
@@ -360,18 +360,44 @@ True
 # delete the author we created to allow later tests to continue working.
 >>> new_author.delete()
 
-Test the behavior of max_num with model formsets. It should properly limit
-the queryset to reduce the amount of objects being pulled in when not being
-used.
+Test the behavior of max_num with model formsets. It should allow all existing
+related objects/inlines for a given object to be displayed, but not allow
+the creation of new inlines beyond max_num.
 
 >>> qs = Author.objects.order_by('name')
 
->>> AuthorFormSet = modelformset_factory(Author, max_num=2)
+>>> AuthorFormSet = modelformset_factory(Author, max_num=None, extra=3)
+>>> formset = AuthorFormSet(queryset=qs)
+>>> len(formset.forms)
+6
+>>> len(formset.extra_forms)
+3
+
+>>> AuthorFormSet = modelformset_factory(Author, max_num=4, extra=3)
+>>> formset = AuthorFormSet(queryset=qs)
+>>> len(formset.forms)
+4
+>>> len(formset.extra_forms)
+1
+
+>>> AuthorFormSet = modelformset_factory(Author, max_num=0, extra=3)
+>>> formset = AuthorFormSet(queryset=qs)
+>>> len(formset.forms)
+3
+>>> len(formset.extra_forms)
+0
+
+>>> AuthorFormSet = modelformset_factory(Author, max_num=None)
 >>> formset = AuthorFormSet(queryset=qs)
 >>> [x.name for x in formset.get_queryset()]
-[u'Charles Baudelaire', u'Paul Verlaine']
+[u'Charles Baudelaire', u'Paul Verlaine', u'Walt Whitman']
 
->>> AuthorFormSet = modelformset_factory(Author, max_num=3)
+>>> AuthorFormSet = modelformset_factory(Author, max_num=0)
+>>> formset = AuthorFormSet(queryset=qs)
+>>> [x.name for x in formset.get_queryset()]
+[u'Charles Baudelaire', u'Paul Verlaine', u'Walt Whitman']
+
+>>> AuthorFormSet = modelformset_factory(Author, max_num=4)
 >>> formset = AuthorFormSet(queryset=qs)
 >>> [x.name for x in formset.get_queryset()]
 [u'Charles Baudelaire', u'Paul Verlaine', u'Walt Whitman']
@@ -393,6 +419,7 @@ used.
 >>> data = {
 ...     'form-TOTAL_FORMS': '3', # the number of forms rendered
 ...     'form-INITIAL_FORMS': '0', # the number of forms with initial data
+...     'form-MAX_NUM_FORMS': '', # the max number of forms
 ...     'form-0-name': 'Walt Whitman',
 ...     'form-1-name': 'Charles Baudelaire',
 ...     'form-2-name': '',
@@ -419,6 +446,7 @@ True
 >>> data = {
 ...     'form-TOTAL_FORMS': '1', # the number of forms rendered
 ...     'form-INITIAL_FORMS': '0', # the number of forms with initial data
+...     'form-MAX_NUM_FORMS': '', # the max number of forms
 ...     'form-0-author_ptr': '',
 ...     'form-0-name': 'Ernest Hemingway',
 ...     'form-0-write_speed': '10',
@@ -442,6 +470,7 @@ True
 >>> data = {
 ...     'form-TOTAL_FORMS': '2', # the number of forms rendered
 ...     'form-INITIAL_FORMS': '1', # the number of forms with initial data
+...     'form-MAX_NUM_FORMS': '', # the max number of forms
 ...     'form-0-author_ptr': hemingway_id,
 ...     'form-0-name': 'Ernest Hemingway',
 ...     'form-0-write_speed': '10',
@@ -476,6 +505,7 @@ admin system's edit inline functionality works.
 >>> data = {
 ...     'book_set-TOTAL_FORMS': '3', # the number of forms rendered
 ...     'book_set-INITIAL_FORMS': '0', # the number of forms with initial data
+...     'book_set-MAX_NUM_FORMS': '', # the max number of forms
 ...     'book_set-0-title': 'Les Fleurs du Mal',
 ...     'book_set-1-title': '',
 ...     'book_set-2-title': '',
@@ -510,9 +540,10 @@ book.
 >>> data = {
 ...     'book_set-TOTAL_FORMS': '3', # the number of forms rendered
 ...     'book_set-INITIAL_FORMS': '1', # the number of forms with initial data
+...     'book_set-MAX_NUM_FORMS': '', # the max number of forms
 ...     'book_set-0-id': '1',
 ...     'book_set-0-title': 'Les Fleurs du Mal',
-...     'book_set-1-title': 'Le Spleen de Paris',
+...     'book_set-1-title': 'Les Paradis Artificiels',
 ...     'book_set-2-title': '',
 ... }
 
@@ -521,14 +552,14 @@ book.
 True
 
 >>> formset.save()
-[<Book: Le Spleen de Paris>]
+[<Book: Les Paradis Artificiels>]
 
-As you can see, 'Le Spleen de Paris' is now a book belonging to Charles Baudelaire.
+As you can see, 'Les Paradis Artificiels' is now a book belonging to Charles Baudelaire.
 
 >>> for book in author.book_set.order_by('id'):
 ...     print book.title
 Les Fleurs du Mal
-Le Spleen de Paris
+Les Paradis Artificiels
 
 The save_as_new parameter lets you re-associate the data to a new instance.
 This is used in the admin for save_as functionality.
@@ -536,10 +567,11 @@ This is used in the admin for save_as functionality.
 >>> data = {
 ...     'book_set-TOTAL_FORMS': '3', # the number of forms rendered
 ...     'book_set-INITIAL_FORMS': '2', # the number of forms with initial data
+...     'book_set-MAX_NUM_FORMS': '', # the max number of forms
 ...     'book_set-0-id': '1',
 ...     'book_set-0-title': 'Les Fleurs du Mal',
 ...     'book_set-1-id': '2',
-...     'book_set-1-title': 'Le Spleen de Paris',
+...     'book_set-1-title': 'Les Paradis Artificiels',
 ...     'book_set-2-title': '',
 ... }
 
@@ -550,7 +582,7 @@ True
 >>> new_author = Author.objects.create(name='Charles Baudelaire')
 >>> formset = AuthorBooksFormSet(data, instance=new_author, save_as_new=True)
 >>> [book for book in formset.save() if book.author.pk == new_author.pk]
-[<Book: Les Fleurs du Mal>, <Book: Le Spleen de Paris>]
+[<Book: Les Fleurs du Mal>, <Book: Les Paradis Artificiels>]
 
 Test using a custom prefix on an inline formset.
 
@@ -573,6 +605,7 @@ Test inline formsets where the inline-edited object has a custom primary key tha
 >>> data = {
 ...     'bookwithcustompk_set-TOTAL_FORMS': '1', # the number of forms rendered
 ...     'bookwithcustompk_set-INITIAL_FORMS': '0', # the number of forms with initial data
+...     'bookwithcustompk_set-MAX_NUM_FORMS': '', # the max number of forms
 ...     'bookwithcustompk_set-0-my_pk': '77777',
 ...     'bookwithcustompk_set-0-title': 'Les Fleurs du Mal',
 ... }
@@ -603,6 +636,7 @@ has a non AutoField yet auto-created primary key.
 >>> data = {
 ...     'alternatebook_set-TOTAL_FORMS': '1', # the number of forms rendered
 ...     'alternatebook_set-INITIAL_FORMS': '0', # the number of forms with initial data
+...     'alternatebook_set-MAX_NUM_FORMS': '', # the max number of forms
 ...     'alternatebook_set-0-title': 'Flowers of Evil',
 ...     'alternatebook_set-0-notes': 'English translation of Les Fleurs du Mal'
 ... }
@@ -631,6 +665,7 @@ True
 >>> data = {
 ...     'poem_set-TOTAL_FORMS': '3', # the number of forms rendered
 ...     'poem_set-INITIAL_FORMS': '0', # the number of forms with initial data
+...     'poem_set-MAX_NUM_FORMS': '', # the max number of forms
 ...     'poem_set-0-name': 'The Cloud in Trousers',
 ...     'poem_set-1-name': 'I',
 ...     'poem_set-2-name': '',
@@ -643,6 +678,55 @@ True
 
 >>> formset.save()
 [<Poem: Brooklyn Bridge>, <Poem: Brooklyn Bridge>]
+
+We can provide a custom queryset to our InlineFormSet:
+
+>>> custom_qs = Book.objects.order_by('-title')
+>>> formset = AuthorBooksFormSet(instance=author, queryset=custom_qs)
+>>> for form in formset.forms:
+...     print form.as_p()
+<p><label for="id_book_set-0-title">Title:</label> <input id="id_book_set-0-title" type="text" name="book_set-0-title" value="Les Paradis Artificiels" maxlength="100" /><input type="hidden" name="book_set-0-author" value="1" id="id_book_set-0-author" /><input type="hidden" name="book_set-0-id" value="2" id="id_book_set-0-id" /></p>
+<p><label for="id_book_set-1-title">Title:</label> <input id="id_book_set-1-title" type="text" name="book_set-1-title" value="Les Fleurs du Mal" maxlength="100" /><input type="hidden" name="book_set-1-author" value="1" id="id_book_set-1-author" /><input type="hidden" name="book_set-1-id" value="1" id="id_book_set-1-id" /></p>
+<p><label for="id_book_set-2-title">Title:</label> <input id="id_book_set-2-title" type="text" name="book_set-2-title" value="Flowers of Evil" maxlength="100" /><input type="hidden" name="book_set-2-author" value="1" id="id_book_set-2-author" /><input type="hidden" name="book_set-2-id" value="5" id="id_book_set-2-id" /></p>
+<p><label for="id_book_set-3-title">Title:</label> <input id="id_book_set-3-title" type="text" name="book_set-3-title" maxlength="100" /><input type="hidden" name="book_set-3-author" value="1" id="id_book_set-3-author" /><input type="hidden" name="book_set-3-id" id="id_book_set-3-id" /></p>
+<p><label for="id_book_set-4-title">Title:</label> <input id="id_book_set-4-title" type="text" name="book_set-4-title" maxlength="100" /><input type="hidden" name="book_set-4-author" value="1" id="id_book_set-4-author" /><input type="hidden" name="book_set-4-id" id="id_book_set-4-id" /></p>
+
+>>> data = {
+...     'book_set-TOTAL_FORMS': '5', # the number of forms rendered
+...     'book_set-INITIAL_FORMS': '3', # the number of forms with initial data
+...     'book_set-MAX_NUM_FORMS': '', # the max number of forms
+...     'book_set-0-id': '1',
+...     'book_set-0-title': 'Les Fleurs du Mal',
+...     'book_set-1-id': '2',
+...     'book_set-1-title': 'Les Paradis Artificiels',
+...     'book_set-2-id': '5',
+...     'book_set-2-title': 'Flowers of Evil',
+...     'book_set-3-title': 'Revue des deux mondes',
+...     'book_set-4-title': '',
+... }
+>>> formset = AuthorBooksFormSet(data, instance=author, queryset=custom_qs)
+>>> formset.is_valid()
+True
+
+>>> custom_qs = Book.objects.filter(title__startswith='F')
+>>> formset = AuthorBooksFormSet(instance=author, queryset=custom_qs)
+>>> for form in formset.forms:
+...     print form.as_p()
+<p><label for="id_book_set-0-title">Title:</label> <input id="id_book_set-0-title" type="text" name="book_set-0-title" value="Flowers of Evil" maxlength="100" /><input type="hidden" name="book_set-0-author" value="1" id="id_book_set-0-author" /><input type="hidden" name="book_set-0-id" value="5" id="id_book_set-0-id" /></p>
+<p><label for="id_book_set-1-title">Title:</label> <input id="id_book_set-1-title" type="text" name="book_set-1-title" maxlength="100" /><input type="hidden" name="book_set-1-author" value="1" id="id_book_set-1-author" /><input type="hidden" name="book_set-1-id" id="id_book_set-1-id" /></p>
+<p><label for="id_book_set-2-title">Title:</label> <input id="id_book_set-2-title" type="text" name="book_set-2-title" maxlength="100" /><input type="hidden" name="book_set-2-author" value="1" id="id_book_set-2-author" /><input type="hidden" name="book_set-2-id" id="id_book_set-2-id" /></p>
+>>> data = {
+...     'book_set-TOTAL_FORMS': '3', # the number of forms rendered
+...     'book_set-INITIAL_FORMS': '1', # the number of forms with initial data
+...     'book_set-MAX_NUM_FORMS': '', # the max number of forms
+...     'book_set-0-id': '5',
+...     'book_set-0-title': 'Flowers of Evil',
+...     'book_set-1-title': 'Revue des deux mondes',
+...     'book_set-2-title': '',
+... }
+>>> formset = AuthorBooksFormSet(data, instance=author, queryset=custom_qs)
+>>> formset.is_valid()
+True
 
 
 # Test a custom primary key ###################################################
@@ -671,6 +755,7 @@ We need to ensure that it is displayed
 >>> data = {
 ...     'owner_set-TOTAL_FORMS': '2',
 ...     'owner_set-INITIAL_FORMS': '0',
+...     'owner_set-MAX_NUM_FORMS': '',
 ...     'owner_set-0-auto_id': '',
 ...     'owner_set-0-name': u'Joe Perry',
 ...     'owner_set-1-auto_id': '',
@@ -692,6 +777,7 @@ True
 >>> data = {
 ...     'owner_set-TOTAL_FORMS': '3',
 ...     'owner_set-INITIAL_FORMS': '1',
+...     'owner_set-MAX_NUM_FORMS': '',
 ...     'owner_set-0-auto_id': u'1',
 ...     'owner_set-0-name': u'Joe Perry',
 ...     'owner_set-1-auto_id': '',
@@ -720,7 +806,8 @@ True
 
 >>> owner = Owner.objects.get(name=u'Joe Perry')
 >>> FormSet = inlineformset_factory(Owner, OwnerProfile, max_num=1, can_delete=False)
-
+>>> FormSet.max_num
+1
 >>> formset = FormSet(instance=owner)
 >>> for form in formset.forms:
 ...     print form.as_p()
@@ -729,6 +816,7 @@ True
 >>> data = {
 ...     'ownerprofile-TOTAL_FORMS': '1',
 ...     'ownerprofile-INITIAL_FORMS': '0',
+...     'ownerprofile-MAX_NUM_FORMS': '1',
 ...     'ownerprofile-0-owner': '',
 ...     'ownerprofile-0-age': u'54',
 ... }
@@ -737,7 +825,6 @@ True
 True
 >>> formset.save()
 [<OwnerProfile: Joe Perry is 54>]
-
 >>> formset = FormSet(instance=owner)
 >>> for form in formset.forms:
 ...     print form.as_p()
@@ -746,6 +833,7 @@ True
 >>> data = {
 ...     'ownerprofile-TOTAL_FORMS': '1',
 ...     'ownerprofile-INITIAL_FORMS': '1',
+...     'ownerprofile-MAX_NUM_FORMS': '1',
 ...     'ownerprofile-0-owner': u'1',
 ...     'ownerprofile-0-age': u'55',
 ... }
@@ -758,6 +846,8 @@ True
 # ForeignKey with unique=True should enforce max_num=1
 
 >>> FormSet = inlineformset_factory(Place, Location, can_delete=False)
+>>> FormSet.max_num
+1
 >>> formset = FormSet(instance=place)
 >>> for form in formset.forms:
 ...     print form.as_p()
@@ -779,6 +869,7 @@ True
 >>> data = {
 ...     'form-TOTAL_FORMS': '1',
 ...     'form-INITIAL_FORMS': '0',
+...     'form-MAX_NUM_FORMS': '',
 ...     'form-0-slug': 'car-red',
 ... }
 >>> formset = FormSet(data)
@@ -790,6 +881,7 @@ True
 >>> data = {
 ...     'form-TOTAL_FORMS': '1',
 ...     'form-INITIAL_FORMS': '0',
+...     'form-MAX_NUM_FORMS': '',
 ...     'form-0-slug': 'car-red',
 ... }
 >>> formset = FormSet(data)
@@ -804,6 +896,7 @@ False
 >>> data = {
 ...     'form-TOTAL_FORMS': '1',
 ...     'form-INITIAL_FORMS': '0',
+...     'form-MAX_NUM_FORMS': '',
 ...     'form-0-price': u'12.00',
 ...     'form-0-quantity': '1',
 ... }
@@ -816,6 +909,7 @@ True
 >>> data = {
 ...     'form-TOTAL_FORMS': '1',
 ...     'form-INITIAL_FORMS': '0',
+...     'form-MAX_NUM_FORMS': '',
 ...     'form-0-price': u'12.00',
 ...     'form-0-quantity': '1',
 ... }
@@ -833,6 +927,7 @@ False
 >>> data = {
 ...     'revision_set-TOTAL_FORMS': '1',
 ...     'revision_set-INITIAL_FORMS': '0',
+...     'revision_set-MAX_NUM_FORMS': '',
 ...     'revision_set-0-repository': repository.pk,
 ...     'revision_set-0-revision': '146239817507f148d448db38840db7c3cbf47c76',
 ...     'revision_set-0-DELETE': '',
@@ -847,6 +942,7 @@ True
 >>> data = {
 ...     'revision_set-TOTAL_FORMS': '1',
 ...     'revision_set-INITIAL_FORMS': '0',
+...     'revision_set-MAX_NUM_FORMS': '',
 ...     'revision_set-0-repository': repository.pk,
 ...     'revision_set-0-revision': '146239817507f148d448db38840db7c3cbf47c76',
 ...     'revision_set-0-DELETE': '',
@@ -864,6 +960,7 @@ False
 >>> data = {
 ...     'revision_set-TOTAL_FORMS': '1',
 ...     'revision_set-INITIAL_FORMS': '0',
+...     'revision_set-MAX_NUM_FORMS': '',
 ...     'revision_set-0-repository': repository.pk,
 ...     'revision_set-0-revision': '146239817507f148d448db38840db7c3cbf47c76',
 ...     'revision_set-0-DELETE': '',
@@ -883,9 +980,9 @@ False
 # when determine what extra forms have changed to save.
 
 >>> form = formset.forms[0] # this formset only has one form
->>> now = form.fields['date_joined'].initial
+>>> now = form.fields['date_joined'].initial()
 >>> print form.as_p()
-<p><label for="id_membership_set-0-date_joined">Date joined:</label> <input type="text" name="membership_set-0-date_joined" value="..." id="id_membership_set-0-date_joined" /><input type="hidden" name="initial-membership_set-0-date_joined" value="..." id="id_membership_set-0-date_joined" /></p>
+<p><label for="id_membership_set-0-date_joined">Date joined:</label> <input type="text" name="membership_set-0-date_joined" value="..." id="id_membership_set-0-date_joined" /><input type="hidden" name="initial-membership_set-0-date_joined" value="..." id="initial-membership_set-0-id_membership_set-0-date_joined" /></p>
 <p><label for="id_membership_set-0-karma">Karma:</label> <input type="text" name="membership_set-0-karma" id="id_membership_set-0-karma" /><input type="hidden" name="membership_set-0-person" value="1" id="id_membership_set-0-person" /><input type="hidden" name="membership_set-0-id" id="id_membership_set-0-id" /></p>
 
 # test for validation with callable defaults. Validations rely on hidden fields
@@ -893,6 +990,7 @@ False
 >>> data = {
 ...     'membership_set-TOTAL_FORMS': '1',
 ...     'membership_set-INITIAL_FORMS': '0',
+...     'membership_set-MAX_NUM_FORMS': '',
 ...     'membership_set-0-date_joined': unicode(now.strftime('%Y-%m-%d %H:%M:%S')),
 ...     'initial-membership_set-0-date_joined': unicode(now.strftime('%Y-%m-%d %H:%M:%S')),
 ...     'membership_set-0-karma': '',
@@ -907,6 +1005,7 @@ True
 >>> filled_data = {
 ...     'membership_set-TOTAL_FORMS': '1',
 ...     'membership_set-INITIAL_FORMS': '0',
+...     'membership_set-MAX_NUM_FORMS': '',
 ...     'membership_set-0-date_joined': unicode(one_day_later.strftime('%Y-%m-%d %H:%M:%S')),
 ...     'initial-membership_set-0-date_joined': unicode(now.strftime('%Y-%m-%d %H:%M:%S')),
 ...     'membership_set-0-karma': '',
@@ -929,6 +1028,7 @@ False
 >>> data = {
 ...     'membership_set-TOTAL_FORMS': '1',
 ...     'membership_set-INITIAL_FORMS': '0',
+...     'membership_set-MAX_NUM_FORMS': '',
 ...     'membership_set-0-date_joined_0': unicode(now.strftime('%Y-%m-%d')),
 ...     'membership_set-0-date_joined_1': unicode(now.strftime('%H:%M:%S')),
 ...     'initial-membership_set-0-date_joined': unicode(now.strftime('%Y-%m-%d %H:%M:%S')),
@@ -964,6 +1064,7 @@ True
 >>> data = {
 ...     'form-TOTAL_FORMS': 2,
 ...     'form-INITIAL_FORMS': 0,
+...     'form-MAX_NUM_FORMS': '',
 ...     'form-0-slug': 'red_car',
 ...     'form-1-slug': 'red_car',
 ... }
@@ -977,6 +1078,7 @@ False
 >>> data = {
 ...     'form-TOTAL_FORMS': 2,
 ...     'form-INITIAL_FORMS': 0,
+...     'form-MAX_NUM_FORMS': '',
 ...     'form-0-price': '25',
 ...     'form-0-quantity': '7',
 ...     'form-1-price': '25',
@@ -988,12 +1090,13 @@ False
 >>> formset._non_form_errors
 [u'Please correct the duplicate data for price and quantity, which must be unique.']
 
-# only the price field is specified, this should skip any unique checks since the unique_together is not fulfilled.
-# this will fail with a KeyError if broken.
+# Only the price field is specified, this should skip any unique checks since
+# the unique_together is not fulfilled. This will fail with a KeyError if broken.
 >>> FormSet = modelformset_factory(Price, fields=("price",), extra=2)
 >>> data = {
 ...     'form-TOTAL_FORMS': '2',
 ...     'form-INITIAL_FORMS': '0',
+...     'form-MAX_NUM_FORMS': '',
 ...     'form-0-price': '24',
 ...     'form-1-price': '24',
 ... }
@@ -1007,6 +1110,7 @@ True
 >>> data = {
 ...     'book_set-TOTAL_FORMS': '2',
 ...     'book_set-INITIAL_FORMS': '2',
+...     'book_set-MAX_NUM_FORMS': '',
 ...
 ...     'book_set-0-title': 'The 2008 Election',
 ...     'book_set-0-author': str(author.id),
@@ -1028,6 +1132,7 @@ False
 >>> data = {
 ...     'form-TOTAL_FORMS': '2',
 ...     'form-INITIAL_FORMS': '0',
+...     'form-MAX_NUM_FORMS': '',
 ...
 ...     'form-0-title': 'blah',
 ...     'form-0-slug': 'Morning',
@@ -1049,6 +1154,7 @@ False
 >>> data = {
 ...     'form-TOTAL_FORMS': '2',
 ...     'form-INITIAL_FORMS': '0',
+...     'form-MAX_NUM_FORMS': '',
 ...
 ...     'form-0-title': 'foo',
 ...     'form-0-slug': 'Morning in Prague',
@@ -1068,6 +1174,7 @@ False
 >>> data = {
 ...     'form-TOTAL_FORMS': '2',
 ...     'form-INITIAL_FORMS': '0',
+...     'form-MAX_NUM_FORMS': '',
 ...
 ...     'form-0-title': 'foo',
 ...     'form-0-slug': 'Morning in Prague',

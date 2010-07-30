@@ -2,8 +2,9 @@
 FR-specific Form helpers
 """
 
+from django.core.validators import EMPTY_VALUES
 from django.forms import ValidationError
-from django.forms.fields import Field, RegexField, Select, EMPTY_VALUES
+from django.forms.fields import Field, RegexField, Select
 from django.utils.encoding import smart_unicode
 from django.utils.translation import ugettext_lazy as _
 import re
@@ -27,7 +28,7 @@ class FRPhoneNumberField(Field):
     '0X XX XX XX XX'.
     """
     default_error_messages = {
-        'invalid': u'Phone numbers must be in 0X XX XX XX XX format.',
+        'invalid': _('Phone numbers must be in 0X XX XX XX XX format.'),
     }
 
     def clean(self, value):

@@ -40,7 +40,7 @@ How to do it
 
 Here's the formal definition of the :func:`~django.views.static.serve` view:
 
-.. function:: def serve(request, path, document_root, show_indexes=False):
+.. function:: def serve(request, path, document_root, show_indexes=False)
 
 To use it, just put this in your :ref:`URLconf <topics-http-urls>`::
 
@@ -126,7 +126,7 @@ Here's the default ``static/directory_index.html`` template:
     listings. The template that was loaded had to be called
     ``static/directory_listing`` (with no ``.html`` extension). For backwards
     compatibility with earlier versions, Django will still load templates with
-    the older (no extension) name, but it will prefer a the
+    the older (no extension) name, but it will prefer the
     ``directory_index.html`` version.
 
 Limiting use to DEBUG=True
